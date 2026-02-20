@@ -20,7 +20,7 @@
 ### Install Script (macOS/Linux/Windows)
 
 ```bash
-curl -fsSL https://github.com/trollefson/shipit/releases/latest/download/install.sh | bash
+curl -fsSL gitshipit.net/install | bash
 ```
 
 ### Cargo
@@ -114,8 +114,7 @@ shipit b2b develop main --dir /path/to/repo
 Writes or overwrites a default config file to the platform config directory and prints the path.
 
 Default config location:
-- **Linux:** `~/.config/shipit/default-config.toml`
-- **macOS:** `~/Library/Application Support/shipit/default-config.toml`
+- **Linux & macOS:** `~/.config/shipit/default-config.toml`
 - **Windows:** `%APPDATA%\shipit\default-config.toml`
 
 ```bash
