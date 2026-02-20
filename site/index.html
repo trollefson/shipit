@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git Shipit</title>
+    <meta name="description" content="shipit is a fast, minimal CLI for managing git releases. Install on macOS, Linux, or Windows in seconds.">
+    <meta name="author" content="Tanner Rollefson">
+    <link rel="canonical" href="https://gitshipit.net/">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://gitshipit.net/">
+    <meta property="og:title" content="shipit — Git Release CLI Built with Rust">
+    <meta property="og:description" content="shipit is a fast, minimal CLI for managing git releases. Install on macOS, Linux, or Windows in seconds.">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="shipit — Git Release CLI Built with Rust">
+    <meta name="twitter:description" content="shipit is a fast, minimal CLI for managing git releases. Install on macOS, Linux, or Windows in seconds.">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #00c8ff;
+            --primary-glow: #00c8ff;
+            --accent: #7eb8f7;
+            --dark: #0d1117;
+            --surface: #161b22;
+            --surface2: #1c2330;
+            --border: #263044;
+            --text: #cdd9e5;
+            --text-muted: #768390;
+            --coffee: #FFDD00;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--dark);
+            background-image:
+                repeating-conic-gradient(#1a2233 0% 25%, #0d1117 0% 50%);
+            background-size: 60px 60px;
+            color: var(--text);
+            text-align: center;
+            padding: 60px 20px;
+            margin: 0;
+            position: relative;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ctext x='5' y='45' font-size='38' opacity='0.18'%3E🚢%3C/text%3E%3C/svg%3E");
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .container {
+            max-width: 550px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+            background: var(--surface);
+            padding: 40px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4), 0 0 60px rgba(0, 200, 255, 0.04);
+        }
+        h1 { margin-top: 0; font-weight: 700; font-size: 2rem; color: #e6edf3; }
+        .download-card {
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            padding: 30px;
+            margin: 25px 0;
+            transition: all 0.3s ease;
+        }
+        .highlight {
+            border-color: var(--primary);
+            background: rgba(0, 200, 255, 0.04);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 200, 255, 0.12), 0 0 0 1px rgba(0, 200, 255, 0.1);
+        }
+        .btn {
+            display: inline-block;
+            padding: 14px 28px;
+            background: var(--primary);
+            color: #0d1117;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 1.1rem;
+            box-shadow: 0 0 16px rgba(0, 200, 255, 0.4);
+        }
+        .btn:hover { filter: brightness(1.1); }
+
+        .install-block {
+            margin-top: 18px;
+            text-align: left;
+        }
+        .install-block label {
+            display: block;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 6px;
+        }
+        .install-cmd {
+            display: flex;
+            align-items: center;
+            background: var(--dark);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+        .install-cmd code {
+            flex: 1;
+            padding: 12px 14px;
+            color: var(--primary);
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.82rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .copy-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 10px 14px;
+            color: var(--text-muted);
+            font-size: 1rem;
+            transition: color 0.2s;
+            flex-shrink: 0;
+        }
+        .copy-btn:hover { color: var(--primary); }
+        .copy-btn.copied { color: #68d391; }
+
+        .other-links { margin-top: 30px; font-size: 0.85em; color: var(--text-muted); line-height: 2; }
+        .other-links a { color: var(--accent); text-decoration: underline; margin: 0 5px; }
+
+        /* Buy Me a Coffee Section */
+        .coffee-section {
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 1px solid var(--border);
+        }
+        .bmc-button {
+            display: inline-flex;
+            align-items: center;
+            background-color: var(--coffee);
+            color: #000000;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            font-family: 'Inter', sans-serif;
+            transition: transform 0.2s;
+        }
+        .bmc-button:hover { transform: scale(1.03); }
+        .bmc-button img { width: 25px; margin-right: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🚢 shipit</h1>
+        <p>A git release tool built with Rust.</p>
+
+        <div id="smart-download" class="download-card highlight">
+            <h3 id="os-label">Detecting your system...</h3>
+            <p id="os-desc"></p>
+            <div class="install-block">
+                <label id="cmd-label">Install command</label>
+                <div class="install-cmd">
+                    <code id="install-cmd-text"></code>
+                    <button class="copy-btn" id="copy-btn" title="Copy to clipboard">&#x2398;</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="other-links">
+            <p>Looking for a different version?</p>
+            <a href="https://github.com/trollefson/shipit/releases/latest">All releases on GitHub</a>
+        </div>
+
+        <div class="coffee-section">
+            <p style="font-size: 0.9rem; margin-bottom: 15px; color: var(--text-muted);">Enjoying shipit?</p>
+            <a class="bmc-button" target="_blank" href="https://buymeacoffee.com/trollefson">
+                <img src="https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg" alt="Buy me a coffee">
+                <span>Buy me a coffee</span>
+            </a>
+        </div>
+    </div>
+
+    <script>
+        const INSTALL_SH = "curl -fsSL https://github.com/trollefson/shipit/releases/latest/download/install.sh | bash";
+        const BREW_CMD   = "brew tap trollefson/shipit && brew install shipit";
+
+        function detectOS() {
+            const ua       = window.navigator.userAgent;
+            const platform = window.navigator.platform.toLowerCase();
+            const label    = document.getElementById('os-label');
+            const desc     = document.getElementById('os-desc');
+            const cmdEl    = document.getElementById('install-cmd-text');
+            const cmdLabel = document.getElementById('cmd-label');
+
+            const isMac = platform.includes('mac') || ua.includes('Mac');
+
+            if (isMac) {
+                label.innerText    = "Install on macOS";
+                desc.innerText     = "Install shipit via Homebrew:";
+                cmdLabel.innerText = "Homebrew";
+                cmdEl.innerText    = BREW_CMD;
+            } else if (platform.includes('win') || ua.includes('Windows')) {
+                label.innerText    = "Install on Windows";
+                desc.innerText     = "Run this command in PowerShell or WSL:";
+                cmdLabel.innerText = "Shell";
+                cmdEl.innerText    = INSTALL_SH;
+            } else {
+                // Linux and everything else
+                label.innerText    = "Install on Linux";
+                desc.innerText     = "Run this command in your terminal:";
+                cmdLabel.innerText = "Shell";
+                cmdEl.innerText    = INSTALL_SH;
+            }
+        }
+
+        document.getElementById('copy-btn').addEventListener('click', function () {
+            const text = document.getElementById('install-cmd-text').innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                this.classList.add('copied');
+                this.innerHTML = '&#x2713;';
+                setTimeout(() => {
+                    this.classList.remove('copied');
+                    this.innerHTML = '&#x2398;';
+                }, 2000);
+            });
+        });
+
+        detectOS();
+    </script>
+</body>
+</html>

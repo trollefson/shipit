@@ -1,0 +1,255 @@
+name: Binary Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: shipit
+  REPO: trollefson/shipit
+  TAP_REPO: trollefson/homebrew-shipit
+
+jobs:
+  build:
+    name: Build · ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 (native)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: shipit-x86_64-unknown-linux-gnu
+
+          # macOS Intel (native on macos-15-intel runner)
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: shipit-x86_64-apple-darwin
+
+          # macOS Apple Silicon (native on macos-latest / arm64 runner)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: shipit-aarch64-apple-darwin
+
+          # Windows x86_64 MSVC (native)
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: shipit-x86_64-pc-windows-msvc.exe
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # git2 → libgit2-sys requires cmake + OpenSSL headers on Linux
+      - name: Install system dependencies (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake libssl-dev pkg-config
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Strip debug symbols to shrink binary size
+      - name: Strip binary symbols (Linux and macOS)
+        if: runner.os != 'Windows'
+        run: strip target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
+
+      - name: Stage artifact (Unix)
+        if: runner.os != 'Windows'
+        run: cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} ${{ matrix.artifact }}
+
+      - name: Stage artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe ${{ matrix.artifact }}
+
+      - name: Extract tag annotation message
+        id: tag_body
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          BODY=$(git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN PGP/,/^-----END PGP/d')
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY"    >> "$GITHUB_OUTPUT"
+          echo "EOF"      >> "$GITHUB_OUTPUT"
+
+      - name: Upload binary to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
+          body: ${{ steps.tag_body.outputs.body }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  extras:
+    name: Installer & Homebrew formula
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release binaries and compute SHA256s
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          mkdir -p /tmp/artifacts
+
+          gh release download "$TAG" \
+            --repo ${{ env.REPO }} \
+            --dir /tmp/artifacts \
+            --pattern "shipit-x86_64-unknown-linux-gnu" \
+            --pattern "shipit-x86_64-apple-darwin" \
+            --pattern "shipit-aarch64-apple-darwin"
+
+          SHA_LINUX=$(sha256sum /tmp/artifacts/shipit-x86_64-unknown-linux-gnu | awk '{print $1}')
+          SHA_MACOS_X86=$(sha256sum /tmp/artifacts/shipit-x86_64-apple-darwin | awk '{print $1}')
+          SHA_MACOS_ARM=$(sha256sum /tmp/artifacts/shipit-aarch64-apple-darwin | awk '{print $1}')
+
+          echo "VERSION=$VERSION"              >> "$GITHUB_ENV"
+          echo "TAG=$TAG"                      >> "$GITHUB_ENV"
+          echo "SHA_LINUX=$SHA_LINUX"          >> "$GITHUB_ENV"
+          echo "SHA_MACOS_X86=$SHA_MACOS_X86"  >> "$GITHUB_ENV"
+          echo "SHA_MACOS_ARM=$SHA_MACOS_ARM"  >> "$GITHUB_ENV"
+
+      - name: Generate install.sh
+        run: |
+          cat > install.sh << 'INSTALL_EOF'
+          #!/bin/sh
+          # shipit installer — https://github.com/trollefson/shipit
+          set -e
+
+          REPO="trollefson/shipit"
+          BINARY="shipit"
+          INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m)
+
+          case "$OS" in
+            linux)
+              case "$ARCH" in
+                x86_64) ARTIFACT="shipit-x86_64-unknown-linux-gnu" ;;
+                *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
+              esac ;;
+            darwin)
+              case "$ARCH" in
+                x86_64) ARTIFACT="shipit-x86_64-apple-darwin" ;;
+                arm64)  ARTIFACT="shipit-aarch64-apple-darwin" ;;
+                *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
+              esac ;;
+            *)
+              echo "Unsupported OS: $OS" >&2; exit 1 ;;
+          esac
+
+          LATEST=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+            | grep '"tag_name"' | head -1 \
+            | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
+
+          URL="https://github.com/${REPO}/releases/download/${LATEST}/${ARTIFACT}"
+          echo "Downloading shipit ${LATEST} (${ARTIFACT})..."
+
+          TMP=$(mktemp)
+          trap 'rm -f "$TMP"' EXIT
+
+          curl -fsSL "$URL" -o "$TMP"
+          chmod +x "$TMP"
+
+          if [ -w "$INSTALL_DIR" ]; then
+            mv "$TMP" "${INSTALL_DIR}/${BINARY}"
+          else
+            sudo mv "$TMP" "${INSTALL_DIR}/${BINARY}"
+          fi
+
+          echo "shipit installed to ${INSTALL_DIR}/${BINARY}"
+          INSTALL_EOF
+          chmod +x install.sh
+
+      - name: Upload install.sh to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ env.TAG }}" install.sh \
+            --repo ${{ env.REPO }} \
+            --clobber
+
+      - name: Generate Homebrew formula
+        run: |
+          mkdir -p Formula
+          cat > Formula/shipit.rb << EOF
+          class Shipit < Formula
+            desc "A CLI for managing git releases"
+            homepage "https://github.com/${{ env.REPO }}"
+            version "${{ env.VERSION }}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/${{ env.REPO }}/releases/download/v${{ env.VERSION }}/shipit-aarch64-apple-darwin"
+                sha256 "${{ env.SHA_MACOS_ARM }}"
+              end
+              on_intel do
+                url "https://github.com/${{ env.REPO }}/releases/download/v${{ env.VERSION }}/shipit-x86_64-apple-darwin"
+                sha256 "${{ env.SHA_MACOS_X86 }}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/${{ env.REPO }}/releases/download/v${{ env.VERSION }}/shipit-x86_64-unknown-linux-gnu"
+                sha256 "${{ env.SHA_LINUX }}"
+              end
+            end
+
+            def install
+              bin.install Dir["shipit*"].first => "shipit"
+            end
+
+            test do
+              system bin/"shipit", "--version"
+            end
+          end
+          EOF
+
+      - name: Push formula to Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${{ env.TAP_REPO }}.git" tap
+          mkdir -p tap/Formula
+          cp Formula/shipit.rb tap/Formula/shipit.rb
+
+          cd tap
+          git add Formula/shipit.rb
+          git diff --cached --quiet || \
+            git commit -m "shipit ${{ env.VERSION }}"
+          git push
