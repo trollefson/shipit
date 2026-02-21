@@ -1,53 +1,17 @@
 use std::env;
 
 use git2::Repository;
-use gitlab::api::{projects, AsyncQuery};
-use reqwest::Client;
-use serde_json::json;
 
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::settings::OllamaSettings;
-
-async fn summarize_with_ollama(text: String, ollama: &OllamaSettings) -> Result<String, ShipItError> {
-    let client = Client::new();
-
-    let prompt = format!(
-        "You are a technical writer tasked with creating organized and concise release notes. Categorize the following comma separated list of commit titles followed by their commit ids into markdown formatted subheadings.  The heading cateogries are new features, bug fixes, infrastructure, and docs.  If a category has no content, exclude it from the output. Do not format or alter the commit messages in any other way. Do not wrap the body of your result in markdown syntax highlighting ticks.\n\n{}",
-         text
-    );
-
-    let url = format!("http://{}:{}{}", ollama.domain, ollama.port, ollama.endpoint);
-
-    let response = client.post(&url)
-        .json(&json!({
-            "model": ollama.model,
-            "prompt": prompt,
-            "stream": false,
-            "options": {
-                "temperature": ollama.options.temperature,
-                "top_p": ollama.options.top_p,
-                "seed": ollama.options.seed
-            }
-        }))
-        .send()
-        .await.map_err(|e| ShipItError::Http(e))?
-        .json::<serde_json::Value>()
-        .await.map_err(|e| ShipItError::Http(e))?;
-
-    // Extract the response string from the JSON
-    let summary = response["response"]
-        .as_str()
-        .ok_or_else(|| ShipItError::Error("Failed to parse Ollama response!".to_string()))?;
-
-    Ok(summary.to_string())
-}
+use crate::common::{open_gitlab_mr, summarize_with_ollama};
 
 pub async fn branch_to_branch(
     ctx: &Context,
     args_source: String,
     args_target: String,
     args_dir: Option<String>,
+    args_id: Option<u64>,
 ) -> Result<(), ShipItError> {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
@@ -115,10 +79,10 @@ pub async fn branch_to_branch(
     }
 
     // ask a local llm to summarize these commit messages
-    // this is an async operation that needs to be blocked
-    // downstream tasks cant function without the results
     let mut summary = if ctx.settings.shipit.ai {
-        let result = summarize_with_ollama(description, &ctx.settings.ollama).await?;
+        let result = summarize_with_ollama(
+            &description, &ctx.settings.ollama
+        ).await.or_else(|_e| Err(ShipItError::Error("Failed to summarize with Ollama!".to_string())))?;
         println!("The merge request description is:\n\n{}", result);
         result
     } else {
@@ -131,24 +95,19 @@ pub async fn branch_to_branch(
         return Ok(());
     }
 
-    // open a gitlab mr
-    let token = ctx.settings.gitlab.token.as_deref()
-        .ok_or_else(|| ShipItError::Error("GitLab token not configured. Set gitlab.token in your shipit config.".to_string()))?;
-
-    let client = gitlab::Gitlab::builder(&ctx.settings.gitlab.domain, token).build_async().await.map_err(|e| ShipItError::Gitlab(e))?;
-
-    let create_mr = projects::merge_requests::CreateMergeRequest::builder()
-        .project(79411719)
-        .source_branch(&args_source)
-        .target_branch(&args_target)
-        .title(format!("{} to {}", &args_source, &args_target))
-        .description(&summary)
-        .remove_source_branch(true)
-        .build().map_err(|_e| ShipItError::Error("Failed to build a Gitlab MR!".to_string()))?;
-
-    let merge_request: serde_json::Value = create_mr.query_async(&client).await.map_err(|_e| ShipItError::Error("Failed to create a Gitlab merge request!".to_string()))?;
-
-    println!("\n\nThe merge request is available at:\n\n{}", merge_request["web_url"]);
+    // open an mr
+    if args_id.is_some() {
+        let project_id = args_id.as_ref().unwrap();
+        let token = ctx.settings.gitlab.token.as_deref()
+            .ok_or_else(|| ShipItError::Error("GitLab token not configured. Set gitlab.token in your shipit config.".to_string()))?;
+        let mr_url = open_gitlab_mr(
+            &args_source, &args_target, &ctx.settings.gitlab.domain,
+            token, project_id, &summary
+        ).await.or_else(|_e| Err(ShipItError::Error("Failed to open a Gitlab MR!".to_string())))?;
+        println!("\n\nThe merge request is available at:\n\n{}", mr_url["web_url"]);
+    } else {
+        return Err(ShipItError::Error("Unable to open a Gitlab MR without a project id specified with '--id'".to_string()));
+    }
 
     Ok(())
 }

@@ -57,7 +57,7 @@ shipit config generate
 shipit config show
 
 # 3. Ship it from the root of your project. See the command docs below for more options
-shipit b2b develop main --dry-run
+shipit b2b develop main --dryrun
 ```
 
 ---
@@ -74,16 +74,17 @@ shipit b2b develop main --dry-run
 ### `b2b` — Branch to Branch
 
 ```
-shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>]
+shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <project-id>]
 ```
 
-| Argument / Flag | Description |
-|-----------------|-------------|
-| `source`        | Branch with new commits (e.g. `develop`) |
-| `target`        | Destination branch (e.g. `main`) |
-| `--ai`          | Enable Ollama LLM to generate categorized release notes |
-| `--dryrun`      | Preview the merge request description without creating it |
-| `--dir <path>`  | Path to the git repository (defaults to current directory) |
+| Argument / Flag      | Description |
+|----------------------|-------------|
+| `source`             | Branch with new commits (e.g. `develop`) |
+| `target`             | Destination branch (e.g. `main`) |
+| `--ai`               | Enable Ollama LLM to generate categorized release notes |
+| `--dryrun`           | Preview the merge request description without creating it |
+| `--dir <path>`       | Path to the git repository (defaults to current directory) |
+| `--id <project-id>`  | GitLab numeric project ID required to open a merge request |
 
 **What happens:**
 
@@ -95,16 +96,16 @@ shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>]
 
 ```bash
 # Basic — raw commit list as MR description
-shipit b2b develop main
+shipit b2b develop main --id 12345678
 
 # With AI-generated release notes
-shipit b2b develop main --ai
+shipit b2b develop main --id 12345678 --ai
 
 # Dry run — see the description without creating the MR
-shipit b2b develop main --ai --dryrun
+shipit b2b develop main --id 12345678 --ai --dryrun
 
 # Point at a repo outside the current directory
-shipit b2b develop main --dir /path/to/repo
+shipit b2b develop main --id 12345678 --ai --dir /path/to/repo
 ```
 
 ---

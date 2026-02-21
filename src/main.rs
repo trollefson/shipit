@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod common;
 mod context;
 mod error;
 mod settings;
@@ -23,8 +24,8 @@ async fn main() -> Result<(), ShipItError> {
 
     let ctx = Context::from_cli(&args).map_err(|_e| ShipItError::Error("Failed to parse CLI context!".to_string()))?;
     match args.command {
-        cli::Commands::B2b { source, target, dir, .. } => {
-            commands::b2b::branch_to_branch(&ctx, source, target, dir).await?;
+        cli::Commands::B2b { source, target, dir, id, .. } => {
+            commands::b2b::branch_to_branch(&ctx, source, target, dir, id).await?;
         }
         cli::Commands::Config { .. } => unreachable!(),
     }
