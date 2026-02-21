@@ -4,6 +4,7 @@ use std::fmt;
 pub enum ShipItError {
     Git(git2::Error),
     Gitlab(gitlab::GitlabError),
+    Github(octocrab::Error),
     Http(reqwest::Error),
     Error(String),
 }
@@ -13,6 +14,7 @@ impl fmt::Display for ShipItError {
         match self {
             Self::Git(e) => write!(f, "Git operation failed with: {}", e),
             Self::Gitlab(e) => write!(f, "Gitlab operation failed with: {}", e),
+            Self::Github(e) => write!(f, "GitHub operation failed with: {}", e),
             Self::Http(e) => write!(f, "The HTTP request failed with: {}", e),
             Self::Error(e) => write!(f, "{}", e),
         }
@@ -24,6 +26,7 @@ impl std::error::Error for ShipItError {
         match self {
             ShipItError::Git(e) => Some(e),
             ShipItError::Gitlab(e) => Some(e),
+            ShipItError::Github(e) => Some(e),
             ShipItError::Http(e) => Some(e),
             _ => None,
         }
