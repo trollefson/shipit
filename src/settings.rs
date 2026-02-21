@@ -5,6 +5,7 @@ pub struct Settings {
     pub shipit: ShipitSettings,
     pub ollama: OllamaSettings,
     pub gitlab: GitlabSettings,
+    pub github: GithubSettings,
 }
 
 impl Default for Settings {
@@ -13,6 +14,7 @@ impl Default for Settings {
             shipit: ShipitSettings::default(),
             ollama: OllamaSettings::default(),
             gitlab: GitlabSettings::default(),
+            github: GithubSettings::default(),
         }
     }
 }
@@ -84,6 +86,21 @@ impl Default for GitlabSettings {
     fn default() -> Self {
         Self {
             domain: "gitlab.com".to_string(),
+            token: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GithubSettings {
+    pub domain: String,
+    pub token: Option<String>,
+}
+
+impl Default for GithubSettings {
+    fn default() -> Self {
+        Self {
+            domain: "github.com".to_string(),
             token: None,
         }
     }

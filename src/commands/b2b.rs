@@ -4,14 +4,14 @@ use git2::Repository;
 
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{open_gitlab_mr, summarize_with_ollama};
+use crate::common::{open_github_pr, open_gitlab_mr, summarize_with_ollama};
 
 pub async fn branch_to_branch(
     ctx: &Context,
     args_source: String,
     args_target: String,
     args_dir: Option<String>,
-    args_id: Option<u64>,
+    args_id: Option<String>,
 ) -> Result<(), ShipItError> {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
@@ -95,18 +95,37 @@ pub async fn branch_to_branch(
         return Ok(());
     }
 
-    // open an mr
-    if args_id.is_some() {
-        let project_id = args_id.as_ref().unwrap();
-        let token = ctx.settings.gitlab.token.as_deref()
-            .ok_or_else(|| ShipItError::Error("GitLab token not configured. Set gitlab.token in your shipit config.".to_string()))?;
+    // handle opening a github pr or gitlab mr
+    // defaults to github if both are configured
+    let id = args_id.as_deref()
+        .ok_or_else(|| ShipItError::Error("A project identifier is required via '--id'.".to_string()))?;
+
+    let use_github = ctx.settings.github.token.is_some();
+    let use_gitlab = ctx.settings.gitlab.token.is_some() && !use_github;
+
+    if use_github {
+        let parts: Vec<&str> = id.splitn(2, '/').collect();
+        if parts.len() != 2 {
+            return Err(ShipItError::Error("'--id' must be in 'owner/repo' format for GitHub.".to_string()));
+        }
+        let (owner, repo) = (parts[0], parts[1]);
+        let token = ctx.settings.github.token.as_deref().unwrap();
+        let pr_url = open_github_pr(
+            &args_source, &args_target, &ctx.settings.github.domain,
+            token, owner, repo, &summary,
+        ).await.map_err(|e| ShipItError::Error(format!("Failed to open a GitHub PR: {}", e)))?;
+        println!("\n\nThe pull request is available at:\n\n{}", pr_url);
+    } else if use_gitlab {
+        let project_id: u64 = id.parse()
+            .map_err(|_| ShipItError::Error("'--id' must be a numeric project ID for GitLab.".to_string()))?;
+        let token = ctx.settings.gitlab.token.as_deref().unwrap();
         let mr_url = open_gitlab_mr(
             &args_source, &args_target, &ctx.settings.gitlab.domain,
-            token, project_id, &summary
-        ).await.or_else(|_e| Err(ShipItError::Error("Failed to open a Gitlab MR!".to_string())))?;
+            token, &project_id, &summary,
+        ).await.map_err(|e| ShipItError::Error(format!("Failed to open a GitLab MR: {}", e)))?;
         println!("\n\nThe merge request is available at:\n\n{}", mr_url["web_url"]);
     } else {
-        return Err(ShipItError::Error("Unable to open a Gitlab MR without a project id specified with '--id'".to_string()));
+        return Err(ShipItError::Error("No platform token configured. Set github.token or gitlab.token in your shipit config.".to_string()));
     }
 
     Ok(())

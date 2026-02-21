@@ -17,8 +17,8 @@ pub enum Commands {
         dryrun: bool,
         #[arg(long)]
         dir: Option<String>,
-        #[arg(long, required_unless_present = "dryrun", help = "GitLab/GitHub Project ID")]
-        id: Option<u64>,
+        #[arg(long, required_unless_present = "dryrun", help = "GitLab project ID or GitHub 'owner/repo'")]
+        id: Option<String>,
     },
     Config {
         #[command(subcommand)]

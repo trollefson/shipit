@@ -1,10 +1,40 @@
 use gitlab::api::{projects, AsyncQuery};
 use gitlab::Gitlab;
+use octocrab::OctocrabBuilder;
 use reqwest::Client;
 use serde_json::json;
 
 use crate::error::ShipItError;
 use crate::settings::OllamaSettings;
+
+
+pub(crate) async fn open_github_pr(
+    source: &str, target: &str, domain: &str, token: &str,
+    owner: &str, repo: &str, description: &str,
+) -> Result<String, ShipItError> {
+    let mut builder = OctocrabBuilder::new().personal_token(token.to_string());
+
+    if domain != "github.com" {
+        let base_uri = format!("https://{}/api/v3/", domain);
+        builder = builder.base_uri(base_uri)
+            .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
+    }
+
+    let octo = builder.build().map_err(|e| ShipItError::Github(e))?;
+
+    let pr = octo
+        .pulls(owner, repo)
+        .create(format!("{} to {}", source, target), source, target)
+        .body(description)
+        .send()
+        .await
+        .map_err(|e| ShipItError::Github(e))?;
+
+    let url = pr.html_url
+        .ok_or_else(|| ShipItError::Error("Failed to get PR URL from GitHub response".to_string()))?;
+
+    Ok(url.to_string())
+}
 
 
 pub(crate) async fn open_gitlab_mr(

@@ -64,7 +64,7 @@ shipit b2b develop main --dryrun
 
 ## Optional Requirements
 
-- A [GitLab](https://gitlab.com) account and [api token](https://docs.gitlab.com/user/profile/personal_access_tokens/) with merge request permissions is required for merge request creation with the `--dry-run` option disabled
+- A [GitHub](https://github.com) or [GitLab](https://gitlab.com) account and api token ([GitHub](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) / [GitLab](https://docs.gitlab.com/user/profile/personal_access_tokens/)) with merge request permissions is required for merge request creation with the `--dry-run` option disabled
 - [Ollama](https://ollama.com) running locally with the model that matches your config is required for usage with the `--ai` option enabled
 
 ---
@@ -84,7 +84,7 @@ shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <project-id>
 | `--ai`               | Enable Ollama LLM to generate categorized release notes |
 | `--dryrun`           | Preview the merge request description without creating it |
 | `--dir <path>`       | Path to the git repository (defaults to current directory) |
-| `--id <project-id>`  | GitLab numeric project ID required to open a merge request |
+| `--id <project-id>`  | Project identifier — `owner/repo` for GitHub, numeric ID for GitLab |
 
 **What happens:**
 
@@ -95,17 +95,20 @@ shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <project-id>
 **Examples:**
 
 ```bash
-# Basic — raw commit list as MR description
+# GitHub — --id uses owner/repo format
+shipit b2b develop main --id owner/repo
+
+# GitLab — --id uses a numeric project ID
 shipit b2b develop main --id 12345678
 
 # With AI-generated release notes
-shipit b2b develop main --id 12345678 --ai
+shipit b2b develop main --id owner/repo --ai
 
 # Dry run — see the description without creating the MR
-shipit b2b develop main --id 12345678 --ai --dryrun
+shipit b2b develop main --id owner/repo --ai --dryrun
 
 # Point at a repo outside the current directory
-shipit b2b develop main --id 12345678 --ai --dir /path/to/repo
+shipit b2b develop main --id owner/repo --ai --dir /path/to/repo
 ```
 
 ---
