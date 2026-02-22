@@ -65,7 +65,7 @@ pub(crate) async fn summarize_with_agent<A: Agent>(
     agent.send_prompt(text).await
 }
 
-/// Extracts the repository path from a git remote URL.
+/// Extracts the repository path from a git remote url.
 pub(crate) fn extract_repo_path(url: &str) -> Option<String> { let path = if url.starts_with("git@") {
         // SSH: git@host:path.git
         url.split(':').nth(1)?
@@ -82,18 +82,18 @@ pub(crate) fn extract_repo_path(url: &str) -> Option<String> { let path = if url
     }
 }
 
-/// Returns the GitHub `owner/repo` identifier by parsing it directly from the remote URL.
+/// Returns the GitHub `owner/repo` identifier by parsing it directly from the remote url.
 pub(crate) fn lookup_github_identifier(remote_url: &str) -> Result<String, ShipItError> {
     extract_repo_path(remote_url).ok_or_else(|| {
         ShipItError::Error(format!(
-            "Failed to parse GitHub owner/repo from remote URL: {}",
+            "Failed to parse GitHub owner/repo from remote url: {}",
             remote_url
         ))
     })
 }
 
-/// Parses the project path from the remote URL and queries the GitLab API
-/// to resolve the numeric project ID.
+/// Parses the project path from the remote url and queries the GitLab API
+/// to resolve the numeric project id.
 pub(crate) async fn lookup_gitlab_project_id(
     remote_url: &str,
     domain: &str,
@@ -101,7 +101,7 @@ pub(crate) async fn lookup_gitlab_project_id(
 ) -> Result<u64, ShipItError> {
     let path = extract_repo_path(remote_url).ok_or_else(|| {
         ShipItError::Error(format!(
-            "Failed to parse GitLab project path from remote URL: {}",
+            "Failed to parse GitLab project path from remote url: {}",
             remote_url
         ))
     })?;
@@ -159,7 +159,7 @@ impl GitPlatform for Github {
             .map_err(|e| ShipItError::Github(e))?;
 
         let url = pr.html_url
-            .ok_or_else(|| ShipItError::Error("Failed to get PR URL from GitHub response".to_string()))?;
+            .ok_or_else(|| ShipItError::Error("Failed to get pr url from GitHub response".to_string()))?;
 
         Ok(url.to_string())
     }
@@ -186,7 +186,7 @@ impl GitPlatform for Gitlab {
             .description(description)
             .remove_source_branch(true)
             .build()
-            .map_err(|e| ShipItError::Error(format!("Failed to build a Gitlab MR: {}", e)))?;
+            .map_err(|e| ShipItError::Error(format!("Failed to build a Gitlab mr: {}", e)))?;
 
         let merge_request: serde_json::Value = create_mr
             .query_async(&client)
@@ -196,7 +196,7 @@ impl GitPlatform for Gitlab {
         merge_request["web_url"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| ShipItError::Error("Failed to get MR URL from GitLab response".to_string()))
+            .ok_or_else(|| ShipItError::Error("Failed to get mr url from GitLab response".to_string()))
     }
 }
 

@@ -74,7 +74,7 @@ shipit b2b develop main --dryrun
 ### `b2b` — Branch to Branch
 
 ```
-shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>] [--platform <github|gitlab>] [--remote <name>] [--prompt <text>] [--description <text>]
+shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>] [--remote <name>] [--prompt <text>] [--description <text>]
 ```
 
 | Argument / Flag                   | Description |
@@ -84,8 +84,7 @@ shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>
 | `--ai`                            | Enable Ollama LLM to generate categorized release notes |
 | `--dryrun`                        | Preview the merge request description without creating it |
 | `--dir <path>`                    | Path to the git repository (defaults to current directory) |
-| `--id <identifier>`               | Project identifier — `owner/repo` for GitHub, numeric ID for GitLab (auto-detected from remote URL if omitted) |
-| `--platform <github\|gitlab>`     | Force a specific platform (overrides auto-detection from the remote URL) |
+| `--id <identifier>`               | Project identifier — `owner/repo` for GitHub, numeric id for GitLab (auto-detected from remote url if omitted) |
 | `--remote <name>`                 | Git remote to detect platform from (defaults to `origin`) |
 | `--prompt <text>`                 | Prompt prefix sent to Ollama when `--ai` is set (overrides the `ollama.prompt` config value) |
 | `--description <text>`            | Use a custom description for the merge/pull request (skips commit discovery and ai summary) |
@@ -112,10 +111,6 @@ shipit b2b develop main --ai --dryrun
 # Explicitly specify the project identifier
 shipit b2b develop main --id owner/repo
 shipit b2b develop main --id 12345678
-
-# Override the detected platform
-shipit b2b develop main --platform github
-shipit b2b develop main --platform gitlab
 
 # Use a different remote
 shipit b2b develop main --remote upstream

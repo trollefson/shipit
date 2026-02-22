@@ -1,12 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Clone, ValueEnum)]
-pub enum Platform {
-    Github,
-    Gitlab,
-}
-
-#[derive(Debug, Clone, ValueEnum)]
 pub enum Agent {
     Ollama,
 }
@@ -44,12 +38,6 @@ pub enum Commands {
             help = "GitLab project id or GitHub 'owner/repo' (auto-detected from remote url if not provided)"
         )]
         id: Option<String>,
-        #[arg(
-            long,
-            value_enum,
-            help = "Platform to open the merge/pull request on (overrides auto-detection)"
-        )]
-        platform: Option<Platform>,
         #[arg(long, default_value = "origin", help = "Name of the git remote to use")]
         remote: String,
         #[arg(
