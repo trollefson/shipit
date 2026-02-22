@@ -5,7 +5,7 @@ use git2::Repository;
 use crate::cli::Platform;
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_github_pr, open_gitlab_mr, push_to_remote, summarize_with_ollama, GitProvider};
+use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_github_pr, open_gitlab_mr, summarize_with_ollama};
 
 pub async fn branch_to_branch(
     ctx: &Context,
@@ -140,14 +140,39 @@ pub async fn branch_to_branch(
         }
     };
 
+    // check if the local source branch is ahead of its remote tracking branch
+    let needs_push = {
+        let local_oid = source.get().target()
+            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to get source branch OID")))?;
+        let remote_tracking_ref = format!("refs/remotes/{}/{}", args_remote, args_source);
+        match repo.find_reference(&remote_tracking_ref) {
+            Ok(remote_ref) => match remote_ref.target() {
+                Some(remote_oid) => {
+                    let (ahead, _) = repo.graph_ahead_behind(local_oid, remote_oid)
+                        .map_err(|e| ShipItError::Git(e))?;
+                    ahead > 0
+                }
+                None => true,
+            },
+            Err(_) => true, // no remote tracking branch yet
+        }
+    };
+
+    if needs_push {
+        println!(
+            "\n\nYour local source branch is ahead of the remote. Please push it, then press Enter to continue:\n\n  git push {} {}\n",
+            args_remote, args_source
+        );
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    }
+
     if is_github {
         let parts: Vec<&str> = resolved_id.splitn(2, '/').collect();
         if parts.len() != 2 {
             return Err(ShipItError::Error(format!("GitHub project identifier '{}' must be in 'owner/repo' format.", resolved_id)));
         }
         let token = ctx.settings.github.token.as_deref().unwrap();
-        push_to_remote(&repo, &args_source, token, GitProvider::GitHub, &args_remote)
-            .map_err(|e| ShipItError::Error(format!("Failed to push to {}: {}", args_remote, e)))?;
         let (owner, gh_repo) = (parts[0], parts[1]);
         let pr_url = open_github_pr(
             &args_source, &args_target, &ctx.settings.github.domain,
@@ -158,8 +183,6 @@ pub async fn branch_to_branch(
         let project_id: u64 = resolved_id.parse()
             .map_err(|_| ShipItError::Error(format!("GitLab project identifier '{}' must be a numeric project ID.", resolved_id)))?;
         let token = ctx.settings.gitlab.token.as_deref().unwrap();
-        push_to_remote(&repo, &args_source, token, GitProvider::GitLab, &args_remote)
-            .map_err(|e| ShipItError::Error(format!("Failed to push to {}: {}", args_remote, e)))?;
         let mr_url = open_gitlab_mr(
             &args_source, &args_target, &ctx.settings.gitlab.domain,
             token, &project_id, &summary,

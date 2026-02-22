@@ -86,14 +86,14 @@ shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>
 | `--dir <path>`                    | Path to the git repository (defaults to current directory) |
 | `--id <identifier>`               | Project identifier — `owner/repo` for GitHub, numeric ID for GitLab (auto-detected from remote URL if omitted) |
 | `--platform <github\|gitlab>`     | Force a specific platform (overrides auto-detection from the remote URL) |
-| `--remote <name>`                 | Git remote to push to and detect platform from (defaults to `origin`) |
+| `--remote <name>`                 | Git remote to detect platform from (defaults to `origin`) |
 | `--prompt <text>`                 | Prompt prefix sent to Ollama when `--ai` is set (overrides the `ollama.prompt` config value) |
 
 **What happens:**
 
 1. Finds all commits on `source` that aren't on `target`
 2. If `--ai` is set, sends the commit log to a local LLM running with Ollama and generates categorized release notes (features, fixes, infra, docs)
-3. Pushes the `source` branch to the remote
+3. If the local `source` branch is ahead of the remote, prompts you to push it before continuing
 4. Opens a pull/merge request on GitHub or GitLab with the description
 
 **Examples:**

@@ -1,4 +1,3 @@
-use git2::{Cred, PushOptions, RemoteCallbacks, Repository};
 use gitlab::api::{projects, AsyncQuery};
 use gitlab::Gitlab;
 use octocrab::OctocrabBuilder;
@@ -67,39 +66,6 @@ pub(crate) async fn lookup_gitlab_project_id(
     project["id"]
         .as_u64()
         .ok_or_else(|| ShipItError::Error("GitLab project response missing 'id' field".to_string()))
-}
-
-pub enum GitProvider {
-    GitHub,
-    GitLab,
-}
-
-pub fn push_to_remote(
-    repo: &Repository,
-    branch_name: &str,
-    token: &str,
-    provider: GitProvider,
-    remote: &str,
-) -> Result<(), ShipItError> {
-    let mut remote = repo.find_remote(remote).map_err(|e| ShipItError::Git(e))?;
-    let mut callbacks = RemoteCallbacks::new();
-
-    let auth_user = match provider {
-        GitProvider::GitHub => "git",
-        GitProvider::GitLab => "oauth2",
-    };
-
-    callbacks.credentials(move |_url, _user_from_url, _allowed| {
-        Cred::userpass_plaintext(auth_user, token)
-    });
-
-    let mut push_options = PushOptions::new();
-    push_options.remote_callbacks(callbacks);
-
-    let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
-    remote.push(&[&refspec], Some(&mut push_options)).map_err(|e| ShipItError::Git(e))?;
-
-    Ok(())
 }
 
 
