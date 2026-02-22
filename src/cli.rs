@@ -29,6 +29,8 @@ pub enum Commands {
         platform: Option<Platform>,
         #[arg(long, default_value = "origin", help = "Name of the git remote to use")]
         remote: String,
+        #[arg(long, help = "Prompt prefix to send to Ollama (overrides the config file value)")]
+        prompt: Option<String>,
     },
     Config {
         #[command(subcommand)]

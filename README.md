@@ -74,7 +74,7 @@ shipit b2b develop main --dryrun
 ### `b2b` — Branch to Branch
 
 ```
-shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>] [--platform <github|gitlab>] [--remote <name>]
+shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>] [--platform <github|gitlab>] [--remote <name>] [--prompt <text>]
 ```
 
 | Argument / Flag                   | Description |
@@ -87,6 +87,7 @@ shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>
 | `--id <identifier>`               | Project identifier — `owner/repo` for GitHub, numeric ID for GitLab (auto-detected from remote URL if omitted) |
 | `--platform <github\|gitlab>`     | Force a specific platform (overrides auto-detection from the remote URL) |
 | `--remote <name>`                 | Git remote to push to and detect platform from (defaults to `origin`) |
+| `--prompt <text>`                 | Prompt prefix sent to Ollama when `--ai` is set (overrides the `ollama.prompt` config value) |
 
 **What happens:**
 

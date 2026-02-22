@@ -156,10 +156,7 @@ pub(crate) async fn open_gitlab_mr(
 pub(crate) async fn summarize_with_ollama(text: &str, ollama: &OllamaSettings) -> Result<String, ShipItError> {
     let client = Client::new();
 
-    let prompt = format!(
-        "You are a technical writer tasked with creating organized and concise release notes. Categorize the following comma separated list of commit titles followed by their commit ids into markdown formatted subheadings.  The heading cateogries are new features, bug fixes, infrastructure, and docs.  If a category has no content, exclude it from the output. Do not format or alter the commit messages in any other way. Do not wrap the body of your result in markdown syntax highlighting ticks.\n\n{}",
-         text
-    );
+    let prompt = format!("{}\n\n{}", ollama.prompt, text);
 
     let url = format!("http://{}:{}{}", ollama.domain, ollama.port, ollama.endpoint);
 

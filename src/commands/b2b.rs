@@ -15,6 +15,7 @@ pub async fn branch_to_branch(
     args_id: Option<String>,
     args_platform: Option<Platform>,
     args_remote: String,
+    args_prompt: Option<String>,
 ) -> Result<(), ShipItError> {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
@@ -83,8 +84,12 @@ pub async fn branch_to_branch(
 
     // ask a local llm to summarize these commit messages
     let mut summary = if ctx.settings.shipit.ai {
+        let mut ollama = ctx.settings.ollama.clone();
+        if let Some(prompt) = args_prompt {
+            ollama.prompt = prompt;
+        }
         let result = summarize_with_ollama(
-            &description, &ctx.settings.ollama
+            &description, &ollama
         ).await.or_else(|_e| Err(ShipItError::Error("Failed to summarize with Ollama!".to_string())))?;
         println!("The merge request description is:\n\n{}", result);
         result
