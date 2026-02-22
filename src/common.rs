@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use gitlab::api::{projects, AsyncQuery};
-use gitlab::Gitlab;
+use gitlab::Gitlab as GitlabClient;
 use octocrab::OctocrabBuilder;
 use reqwest::Client;
 use serde_json::json;
@@ -7,7 +9,61 @@ use serde_json::json;
 use crate::error::ShipItError;
 use crate::settings::OllamaSettings;
 
-/// Extracts the repository path from a git remote URL.
+pub(crate) trait Agent {
+    async fn send_prompt(&self, text: &str) -> Result<String, ShipItError>;
+}
+
+pub(crate) struct OllamaAgent {
+    settings: OllamaSettings,
+}
+
+impl OllamaAgent {
+    pub(crate) fn new(settings: OllamaSettings) -> Self {
+        Self { settings }
+    }
+}
+
+impl Agent for OllamaAgent {
+    async fn send_prompt(&self, text: &str) -> Result<String, ShipItError> {
+        let client = Client::new();
+
+        let prompt = format!("{}\n\n{}", self.settings.prompt, text);
+        let url = format!(
+            "http://{}:{}{}",
+            self.settings.domain, self.settings.port, self.settings.endpoint
+        );
+
+        let response = client
+            .post(&url)
+            .json(&json!({
+                "model": self.settings.model,
+                "prompt": prompt,
+                "stream": false,
+                "options": self.settings.options,
+            }))
+            .send()
+            .await
+            .map_err(|e| ShipItError::Http(e))?
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| ShipItError::Http(e))?;
+
+        let summary = response["response"]
+            .as_str()
+            .ok_or_else(|| ShipItError::Error("Failed to parse Ollama response!".to_string()))?;
+
+        Ok(summary.to_string())
+    }
+}
+
+pub(crate) async fn summarize_with_agent<A: Agent>(
+    text: &str,
+    agent: &A,
+) -> Result<String, ShipItError> {
+    agent.send_prompt(text).await
+}
+
+/// Extracts the repository path from a git remote url.
 pub(crate) fn extract_repo_path(url: &str) -> Option<String> { let path = if url.starts_with("git@") {
         // SSH: git@host:path.git
         url.split(':').nth(1)?
@@ -24,18 +80,18 @@ pub(crate) fn extract_repo_path(url: &str) -> Option<String> { let path = if url
     }
 }
 
-/// Returns the GitHub `owner/repo` identifier by parsing it directly from the remote URL.
+/// Returns the GitHub `owner/repo` identifier by parsing it directly from the remote url.
 pub(crate) fn lookup_github_identifier(remote_url: &str) -> Result<String, ShipItError> {
     extract_repo_path(remote_url).ok_or_else(|| {
         ShipItError::Error(format!(
-            "Failed to parse GitHub owner/repo from remote URL: {}",
+            "Failed to parse GitHub owner/repo from remote url: {}",
             remote_url
         ))
     })
 }
 
-/// Parses the project path from the remote URL and queries the GitLab API
-/// to resolve the numeric project ID.
+/// Parses the project path from the remote url and queries the GitLab API
+/// to resolve the numeric project id.
 pub(crate) async fn lookup_gitlab_project_id(
     remote_url: &str,
     domain: &str,
@@ -43,12 +99,12 @@ pub(crate) async fn lookup_gitlab_project_id(
 ) -> Result<u64, ShipItError> {
     let path = extract_repo_path(remote_url).ok_or_else(|| {
         ShipItError::Error(format!(
-            "Failed to parse GitLab project path from remote URL: {}",
+            "Failed to parse GitLab project path from remote url: {}",
             remote_url
         ))
     })?;
 
-    let client = Gitlab::builder(domain, token)
+    let client = GitlabClient::builder(domain, token)
         .build_async()
         .await
         .map_err(|e| ShipItError::Gitlab(e))?;
@@ -69,82 +125,491 @@ pub(crate) async fn lookup_gitlab_project_id(
 }
 
 
-pub(crate) async fn open_github_pr(
-    source: &str, target: &str, domain: &str, token: &str,
-    owner: &str, repo: &str, description: &str,
-) -> Result<String, ShipItError> {
-    let mut builder = OctocrabBuilder::new().personal_token(token.to_string());
+pub(crate) trait GitPlatform {
+    async fn open(&self, source: &str, target: &str, description: &str) -> Result<String, ShipItError>;
+}
 
-    if domain != "github.com" {
-        let base_uri = format!("https://{}/api/v3/", domain);
-        builder = builder.base_uri(base_uri)
-            .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
+pub(crate) struct Github {
+    pub domain: String,
+    pub token: String,
+    pub owner: String,
+    pub repo: String,
+}
+
+impl GitPlatform for Github {
+    async fn open(&self, source: &str, target: &str, description: &str) -> Result<String, ShipItError> {
+        let mut builder = OctocrabBuilder::new().personal_token(self.token.clone());
+
+        if self.domain != "github.com" {
+            let base_uri = format!("https://{}/api/v3/", self.domain);
+            builder = builder.base_uri(base_uri)
+                .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
+        }
+
+        let octo = builder.build().map_err(|e| ShipItError::Github(e))?;
+
+        let pr = octo
+            .pulls(&self.owner, &self.repo)
+            .create(format!("{} to {}", source, target), source, target)
+            .body(description)
+            .send()
+            .await
+            .map_err(|e| ShipItError::Github(e))?;
+
+        let url = pr.html_url
+            .ok_or_else(|| ShipItError::Error("Failed to get pr url from GitHub response".to_string()))?;
+
+        Ok(url.to_string())
+    }
+}
+
+pub(crate) struct Gitlab {
+    pub domain: String,
+    pub token: String,
+    pub project_id: u64,
+}
+
+impl GitPlatform for Gitlab {
+    async fn open(&self, source: &str, target: &str, description: &str) -> Result<String, ShipItError> {
+        let client = GitlabClient::builder(&self.domain, &self.token)
+            .build_async()
+            .await
+            .map_err(|e| ShipItError::Gitlab(e))?;
+
+        let create_mr = projects::merge_requests::CreateMergeRequest::builder()
+            .project(self.project_id)
+            .source_branch(source)
+            .target_branch(target)
+            .title(format!("{} to {}", source, target))
+            .description(description)
+            .remove_source_branch(true)
+            .build()
+            .map_err(|e| ShipItError::Error(format!("Failed to build a Gitlab mr: {}", e)))?;
+
+        let merge_request: serde_json::Value = create_mr
+            .query_async(&client)
+            .await
+            .map_err(|e| ShipItError::Error(format!("Failed to create a Gitlab merge request: {}", e)))?;
+
+        merge_request["web_url"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| ShipItError::Error("Failed to get mr url from GitLab response".to_string()))
+    }
+}
+
+pub(crate) async fn open_merge_request<P: GitPlatform>(
+    platform: &P,
+    source: &str,
+    target: &str,
+    description: &str,
+) -> Result<String, ShipItError> {
+    platform.open(source, target, description).await
+}
+
+
+/// Formats a map of categorized commits into a markdown string.
+/// Each key becomes a `##` subheading with its commits listed as bullet points.
+/// Keys are sorted alphabetically and empty categories are omitted.
+pub(crate) fn format_categorized_commits(commits: &HashMap<String, Vec<String>>) -> String {
+    let mut keys: Vec<&String> = commits.keys().collect();
+    keys.sort();
+
+    let mut sections: Vec<String> = Vec::new();
+    for key in keys {
+        let entries = &commits[key];
+        if entries.is_empty() {
+            continue;
+        }
+        // replace '_' with ' ' and uppercase each heading
+        let heading = key
+            .split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut section = format!("## {}\n", heading);
+        for commit in entries {
+            section.push_str(&format!("- {}\n", commit));
+        }
+        sections.push(section);
     }
 
-    let octo = builder.build().map_err(|e| ShipItError::Github(e))?;
-
-    let pr = octo
-        .pulls(owner, repo)
-        .create(format!("{} to {}", source, target), source, target)
-        .body(description)
-        .send()
-        .await
-        .map_err(|e| ShipItError::Github(e))?;
-
-    let url = pr.html_url
-        .ok_or_else(|| ShipItError::Error("Failed to get PR URL from GitHub response".to_string()))?;
-
-    Ok(url.to_string())
+    sections.join("\n")
 }
 
+/// Categorizes conventional commits into features, bug fixes, infrastructure, docs, and misc.
+///
+/// The key for each category in the returned map is one of:
+/// `"features"`, `"bug_fixes"`, `"infrastructure"`, `"docs"`, `"misc"`.
+pub(crate) fn categorize_commits(commits: &[&str]) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = [
+        "features",
+        "bug_fixes",
+        "infrastructure",
+        "docs",
+        "misc",
+    ]
+    .iter()
+    .map(|&k| (k.to_string(), Vec::new()))
+    .collect();
 
-pub(crate) async fn open_gitlab_mr(
-    source: &str, target: &str, domain: &str, token: &str,
-    project_id: &u64, description: &str
-) -> Result<serde_json::Value, ShipItError> {
-    let client = Gitlab::builder(domain, token).build_async().await.map_err(|e| ShipItError::Gitlab(e))?;
+    for &commit in commits {
+        let commit_type = commit.split(['(', ':']).next().unwrap_or("").trim();
+        let category = match commit_type {
+            "feat" => "features",
+            "fix" => "bug_fixes",
+            "ci" | "build" | "chore" | "perf" | "refactor" | "style" | "test" => "infrastructure",
+            "docs" => "docs",
+            _ => "misc",
+        };
+        map.entry(category.to_string()).or_default().push(commit.to_string());
+    }
 
-    let create_mr = projects::merge_requests::CreateMergeRequest::builder()
-        .project(*project_id)
-        .source_branch(source)
-        .target_branch(target)
-        .title(format!("{} to {}", source, target))
-        .description(description)
-        .remove_source_branch(true)
-        .build().map_err(|_e| ShipItError::Error("Failed to build a Gitlab MR!".to_string()))?;
-
-    let merge_request: serde_json::Value = create_mr.query_async(&client).await.map_err(|_e| ShipItError::Error("Failed to create a Gitlab merge request!".to_string()))?;
-
-    Ok(merge_request)
+    map
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ShipItError;
+    use crate::settings::{OllamaOptions, OllamaSettings};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-pub(crate) async fn summarize_with_ollama(text: &str, ollama: &OllamaSettings) -> Result<String, ShipItError> {
-    let client = Client::new();
+    #[test]
+    fn test_extract_repo_path_ssh_url() {
+        assert_eq!(
+            extract_repo_path("git@github.com:owner/repo.git"),
+            Some("owner/repo".to_string())
+        );
+    }
 
-    let prompt = format!("{}\n\n{}", ollama.prompt, text);
+    #[test]
+    fn test_extract_repo_path_returns_none_for_empty_string() {
+        assert_eq!(extract_repo_path(""), None);
+    }
 
-    let url = format!("http://{}:{}{}", ollama.domain, ollama.port, ollama.endpoint);
+    #[test]
+    fn test_extract_repo_path_returns_none_for_empty_ssh_path() {
+        assert_eq!(extract_repo_path("git@github.com:"), None);
+    }
 
-    let response = client.post(&url)
-        .json(&json!({
-            "model": ollama.model,
-            "prompt": prompt,
-            "stream": false,
-            "options": {
-                "temperature": ollama.options.temperature,
-                "top_p": ollama.options.top_p,
-                "seed": ollama.options.seed
-            }
-        }))
-        .send()
-        .await.map_err(|e| ShipItError::Http(e))?
-        .json::<serde_json::Value>()
-        .await.map_err(|e| ShipItError::Http(e))?;
+    #[test]
+    fn test_lookup_github_identifier_success() {
+        let result = lookup_github_identifier("git@github.com:owner/repo.git");
+        assert_eq!(result.unwrap(), "owner/repo");
+    }
 
-    let summary = response["response"]
-        .as_str()
-        .ok_or_else(|| ShipItError::Error("Failed to parse Ollama response!".to_string()))?;
+    #[test]
+    fn test_lookup_github_identifier_returns_error_for_unparseable_url() {
+        let result = lookup_github_identifier("");
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
 
-    Ok(summary.to_string())
+    #[tokio::test]
+    async fn test_lookup_gitlab_project_id_returns_error_for_unparseable_url() {
+        let result = lookup_gitlab_project_id("", "gitlab.com", "token").await;
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_gitlab_project_id_returns_gitlab_error_for_invalid_domain() {
+        let result = lookup_gitlab_project_id(
+            "git@host:owner/repo.git",
+            "://invalid",
+            "token",
+        )
+        .await;
+        assert!(matches!(result, Err(ShipItError::Gitlab(_))));
+    }
+
+    struct MockPlatformSuccess;
+    struct MockPlatformError;
+
+    impl GitPlatform for MockPlatformSuccess {
+        async fn open(&self, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
+            Ok("https://github.com/owner/repo/pull/1".to_string())
+        }
+    }
+
+    impl GitPlatform for MockPlatformError {
+        async fn open(&self, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
+            Err(ShipItError::Error("platform returned an error".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_merge_request_success() {
+        let result = open_merge_request(&MockPlatformSuccess, "feat", "main", "desc").await;
+        assert_eq!(result.unwrap(), "https://github.com/owner/repo/pull/1");
+    }
+
+    #[tokio::test]
+    async fn test_open_merge_request_propagates_platform_error() {
+        let result = open_merge_request(&MockPlatformError, "feat", "main", "desc").await;
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    fn ollama_settings(port: u16) -> OllamaSettings {
+        OllamaSettings {
+            model: "test-model".to_string(),
+            domain: "127.0.0.1".to_string(),
+            port,
+            endpoint: "/api/generate".to_string(),
+            prompt: "Summarize:".to_string(),
+            options: OllamaOptions::default(),
+        }
+    }
+
+    struct MockAgentSuccess;
+    struct MockAgentError;
+
+    impl Agent for MockAgentSuccess {
+        async fn send_prompt(&self, _text: &str) -> Result<String, ShipItError> {
+            Ok("mock summary".to_string())
+        }
+    }
+
+    impl Agent for MockAgentError {
+        async fn send_prompt(&self, _text: &str) -> Result<String, ShipItError> {
+            Err(ShipItError::Error("agent error".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_summarize_with_agent_delegates_to_agent() {
+        let result = summarize_with_agent("some commits", &MockAgentSuccess).await;
+        assert_eq!(result.unwrap(), "mock summary");
+    }
+
+    #[tokio::test]
+    async fn test_summarize_with_agent_propagates_agent_error() {
+        let result = summarize_with_agent("text", &MockAgentError).await;
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn test_ollama_agent_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/generate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "response": "Generated summary" })),
+            )
+            .mount(&server)
+            .await;
+
+        let agent = OllamaAgent::new(ollama_settings(server.address().port()));
+        let result = summarize_with_agent("some commits", &agent).await;
+        assert_eq!(result.unwrap(), "Generated summary");
+    }
+
+    #[tokio::test]
+    async fn test_ollama_agent_returns_http_error_on_connection_failure() {
+        let closed_port = {
+            let server = MockServer::start().await;
+            server.address().port()
+        };
+        let agent = OllamaAgent::new(ollama_settings(closed_port));
+        let result = summarize_with_agent("text", &agent).await;
+        assert!(matches!(result, Err(ShipItError::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn test_ollama_agent_returns_http_error_on_invalid_json_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/generate"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not valid json"))
+            .mount(&server)
+            .await;
+
+        let agent = OllamaAgent::new(ollama_settings(server.address().port()));
+        let result = summarize_with_agent("text", &agent).await;
+        assert!(matches!(result, Err(ShipItError::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn test_ollama_agent_returns_error_when_response_field_missing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/generate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "not_response": "oops" })),
+            )
+            .mount(&server)
+            .await;
+
+        let agent = OllamaAgent::new(ollama_settings(server.address().port()));
+        let result = summarize_with_agent("text", &agent).await;
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[test]
+    fn test_categorize_commits_empty_input() {
+        let result = categorize_commits(&[]);
+        assert!(result["features"].is_empty());
+        assert!(result["bug_fixes"].is_empty());
+        assert!(result["infrastructure"].is_empty());
+        assert!(result["docs"].is_empty());
+        assert!(result["misc"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_features() {
+        let commits = vec!["feat: add login page", "feat(auth): add OAuth support"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["features"], vec!["feat: add login page", "feat(auth): add OAuth support"]);
+        assert!(result["bug_fixes"].is_empty());
+        assert!(result["infrastructure"].is_empty());
+        assert!(result["docs"].is_empty());
+        assert!(result["misc"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_bug_fixes() {
+        let commits = vec!["fix: resolve null pointer", "fix(ui): correct button alignment"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["bug_fixes"], vec!["fix: resolve null pointer", "fix(ui): correct button alignment"]);
+        assert!(result["features"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_infrastructure() {
+        let commits = vec![
+            "ci: add github actions",
+            "build: update dependencies",
+            "chore: clean up temp files",
+            "perf: cache expensive query",
+            "refactor: extract helper",
+            "style: fix trailing whitespace",
+            "test: add unit tests",
+        ];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["infrastructure"].len(), 7);
+        assert!(result["features"].is_empty());
+        assert!(result["bug_fixes"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_docs() {
+        let commits = vec!["docs: update README", "docs(api): add endpoint docs"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["docs"], vec!["docs: update README", "docs(api): add endpoint docs"]);
+        assert!(result["features"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_misc() {
+        let commits = vec!["wip: half done feature", "unknown: some commit"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["misc"], vec!["wip: half done feature", "unknown: some commit"]);
+        assert!(result["features"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_mixed() {
+        let commits = vec![
+            "feat: add feature",
+            "fix: fix bug",
+            "docs: update docs",
+            "ci: add workflow",
+            "wip: in progress",
+        ];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["features"], vec!["feat: add feature"]);
+        assert_eq!(result["bug_fixes"], vec!["fix: fix bug"]);
+        assert_eq!(result["docs"], vec!["docs: update docs"]);
+        assert_eq!(result["infrastructure"], vec!["ci: add workflow"]);
+        assert_eq!(result["misc"], vec!["wip: in progress"]);
+    }
+
+    #[test]
+    fn test_format_categorized_commits_empty_map() {
+        let map: HashMap<String, Vec<String>> = HashMap::new();
+        assert_eq!(format_categorized_commits(&map), "");
+    }
+
+    #[test]
+    fn test_format_categorized_commits_skips_empty_categories() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec![]);
+        map.insert("bug_fixes".to_string(), vec![]);
+        assert_eq!(format_categorized_commits(&map), "");
+    }
+
+    #[test]
+    fn test_format_categorized_commits_single_category_single_commit() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec!["feat: add login".to_string()]);
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Features\n- feat: add login\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_single_category_multiple_commits() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert(
+            "bug_fixes".to_string(),
+            vec![
+                "fix: resolve null pointer".to_string(),
+                "fix(ui): correct alignment".to_string(),
+            ],
+        );
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Bug Fixes\n- fix: resolve null pointer\n- fix(ui): correct alignment\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_single_category_three_commits() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert(
+            "infrastructure".to_string(),
+            vec![
+                "ci: add github actions".to_string(),
+                "build: update dependencies".to_string(),
+                "chore: remove unused files".to_string(),
+            ],
+        );
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Infrastructure\n- ci: add github actions\n- build: update dependencies\n- chore: remove unused files\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_multiple_categories_sorted() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec!["feat: add search".to_string()]);
+        map.insert("bug_fixes".to_string(), vec!["fix: crash on startup".to_string()]);
+        map.insert("docs".to_string(), vec!["docs: update README".to_string()]);
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Bug Fixes\n- fix: crash on startup\n\n## Docs\n- docs: update README\n\n## Features\n- feat: add search\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_mixed_empty_and_populated() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec!["feat: new flag".to_string()]);
+        map.insert("misc".to_string(), vec![]);
+        map.insert("docs".to_string(), vec!["docs: fix typo".to_string()]);
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Docs\n- docs: fix typo\n\n## Features\n- feat: new flag\n"
+        );
+    }
 }

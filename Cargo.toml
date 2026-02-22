@@ -1,6 +1,6 @@
 [package]
 name = "shipit"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 description = "A CLI for managing git releases"
@@ -18,3 +18,8 @@ serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.0.3"
 confy = "2.0.0"
 octocrab = "0.41"
+indicatif = "0.17"
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
