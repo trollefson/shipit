@@ -14,6 +14,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Open a merge/pull request from a source branch to a target branch
     B2b {
         source: String,
         target: String,
@@ -56,6 +57,7 @@ pub enum Commands {
         )]
         description: Option<String>,
     },
+    /// Manage shipit configuration
     Config {
         #[command(subcommand)]
         subcommand: ConfigCommands,
@@ -64,6 +66,8 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommands {
+    /// Write the default config to the platform config directory (overwrites existing config)
     Generate,
+    /// Print the current config and its file path
     Show,
 }
