@@ -18,6 +18,7 @@ pub async fn branch_to_branch(
     args_platform: Option<Platform>,
     args_remote: String,
     args_prompt: Option<String>,
+    args_description: Option<String>,
 ) -> Result<(), ShipItError> {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
@@ -37,80 +38,86 @@ pub async fn branch_to_branch(
 
     // get branch and most recent commit structs for the target and source branches
     let source = repo.find_branch(&args_source, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
-    let target = repo.find_branch(&args_target, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
-    let target_oid = target
-        .get()
-        .target()
-        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the target branch!")))?;
 
-    // find the most recent target commit on the source branch
-    // this will help determine which commits are not present on the target branch
-    let target_oid_on_source = repo.find_commit(target_oid).unwrap();
-
-    // create a vector of the commit ids that are on the source, but not the
-    // target branch.  display the messages for those commit ids
-    // and create a revision walk for the source branch
-    let mut revwalk = repo.revwalk().map_err(|e| ShipItError::Git(e))?;
-    let root_ref = "refs/heads/";
-    let branch_ref = source
-        .name().map_err(|e| ShipItError::Git(e))?
-        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the name of the source branch!")))?;
-    let full_ref = root_ref.to_string() + branch_ref;
-    revwalk.push_ref(&full_ref).map_err(|e| ShipItError::Git(e))?;
-    let target_oid_hash = target_oid_on_source.id();
-
-    // hide commits that are on both branches
-    // essentially tells the walker to stop here
-    revwalk.hide(target_oid_hash).map_err(|e| ShipItError::Git(e))?;
-    let mut commits = Vec::new();
-    for oid in revwalk {
-        commits.push(oid.map_err(|e| ShipItError::Git(e))?);
-    }
-
-    // display the messages of the discovered commits
-    let mut messages = Vec::new();
-    for commit in commits {
-        let release_oid = repo.find_commit(commit).unwrap();
-        let msg = release_oid
-            .message()
-            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the message of a release commit!")))?
-            .to_string();
-        messages.push(format!("{} {}", msg, release_oid.id().to_string()));
-    }
-    let description = messages.join(",");
-
-    if description.is_empty() {
-        println!("No commits found between '{}' and '{}'. Nothing to do.", args_source, args_target);
-        return Ok(());
-    }
-
-    // ask a local llm to summarize these commit messages
-    let mut summary = if ctx.settings.shipit.ai {
-        let mut ollama = ctx.settings.ollama.clone();
-        if let Some(prompt) = args_prompt {
-            ollama.prompt = prompt;
-        }
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_style(
-            ProgressStyle::default_spinner()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-                .template("{spinner:.cyan} {msg}")
-                .unwrap(),
-        );
-        spinner.set_message(format!("Asking Ollama to categorize the commits({})...", ollama.model));
-        spinner.enable_steady_tick(Duration::from_millis(80));
-
-        let result = summarize_with_ollama(
-            &description, &ollama
-        ).await.or_else(|_e| Err(ShipItError::Error("Failed to summarize with Ollama!".to_string())));
-
-        spinner.finish_and_clear();
-
-        let result = result?;
-        println!("The merge request description is:\n\n{}", result);
-        result
+    // if a description is provided, skip commit discovery and summary generation
+    let mut summary = if let Some(provided) = args_description {
+        provided
     } else {
-        description
+        let target = repo.find_branch(&args_target, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
+        let target_oid = target
+            .get()
+            .target()
+            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the target branch!")))?;
+
+        // find the most recent target commit on the source branch
+        // this will help determine which commits are not present on the target branch
+        let target_oid_on_source = repo.find_commit(target_oid).unwrap();
+
+        // create a vector of the commit ids that are on the source, but not the
+        // target branch.  display the messages for those commit ids
+        // and create a revision walk for the source branch
+        let mut revwalk = repo.revwalk().map_err(|e| ShipItError::Git(e))?;
+        let root_ref = "refs/heads/";
+        let branch_ref = source
+            .name().map_err(|e| ShipItError::Git(e))?
+            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the name of the source branch!")))?;
+        let full_ref = root_ref.to_string() + branch_ref;
+        revwalk.push_ref(&full_ref).map_err(|e| ShipItError::Git(e))?;
+        let target_oid_hash = target_oid_on_source.id();
+
+        // hide commits that are on both branches
+        // essentially tells the walker to stop here
+        revwalk.hide(target_oid_hash).map_err(|e| ShipItError::Git(e))?;
+        let mut commits = Vec::new();
+        for oid in revwalk {
+            commits.push(oid.map_err(|e| ShipItError::Git(e))?);
+        }
+
+        // display the messages of the discovered commits
+        let mut messages = Vec::new();
+        for commit in commits {
+            let release_oid = repo.find_commit(commit).unwrap();
+            let msg = release_oid
+                .message()
+                .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the message of a release commit!")))?
+                .to_string();
+            messages.push(format!("{} {}", msg, release_oid.id().to_string()));
+        }
+        let description = messages.join(",");
+
+        if description.is_empty() {
+            println!("No commits found between '{}' and '{}'. Nothing to do.", args_source, args_target);
+            return Ok(());
+        }
+
+        // ask a local llm to summarize these commit messages
+        if ctx.settings.shipit.ai {
+            let mut ollama = ctx.settings.ollama.clone();
+            if let Some(prompt) = args_prompt {
+                ollama.prompt = prompt;
+            }
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .template("{spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+            spinner.set_message(format!("Asking Ollama to categorize the commits({})...", ollama.model));
+            spinner.enable_steady_tick(Duration::from_millis(80));
+
+            let result = summarize_with_ollama(
+                &description, &ollama
+            ).await.or_else(|_e| Err(ShipItError::Error("Failed to summarize with Ollama!".to_string())));
+
+            spinner.finish_and_clear();
+
+            let result = result?;
+            println!("The merge request description is:\n\n{}", result);
+            result
+        } else {
+            description
+        }
     };
     summary += "\n\n\n*This request was generated by [Shipit](https://gitshipit.net)* 🚢";
 

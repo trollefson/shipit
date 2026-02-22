@@ -7,7 +7,7 @@
 ╚══════╝╚═╝  ╚═╝╚═╝╚═╝     ╚═╝   ╚═╝
 ```
 
-**Shipit** is a Rust CLI that automates merge request creation on your favorite platforms with optional AI-generated notes | [gitshipit.net](https://gitshipit.net)
+**Shipit** is a Rust command line interface for managing merge requests, changelogs, tags, and releases. | [gitshipit.net](https://gitshipit.net)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/trollefson)
 [![Crates.io](https://img.shields.io/crates/v/shipit)](https://crates.io/crates/shipit)
@@ -74,7 +74,7 @@ shipit b2b develop main --dryrun
 ### `b2b` — Branch to Branch
 
 ```
-shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>] [--platform <github|gitlab>] [--remote <name>] [--prompt <text>]
+shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>] [--platform <github|gitlab>] [--remote <name>] [--prompt <text>] [--description <text>]
 ```
 
 | Argument / Flag                   | Description |
@@ -88,6 +88,7 @@ shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>
 | `--platform <github\|gitlab>`     | Force a specific platform (overrides auto-detection from the remote URL) |
 | `--remote <name>`                 | Git remote to detect platform from (defaults to `origin`) |
 | `--prompt <text>`                 | Prompt prefix sent to Ollama when `--ai` is set (overrides the `ollama.prompt` config value) |
+| `--description <text>`            | Use a custom description for the merge/pull request (skips commit discovery and ai summary) |
 
 **What happens:**
 
@@ -121,6 +122,9 @@ shipit b2b develop main --remote upstream
 
 # Point at a repo outside the current directory
 shipit b2b develop main --dir /path/to/repo
+
+# Pass a custom description directly (skips commit discovery and ai)
+shipit b2b develop main --description "<your own mr/pr description>""
 ```
 
 ---
