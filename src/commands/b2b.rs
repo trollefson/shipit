@@ -1,6 +1,8 @@
 use std::env;
+use std::time::Duration;
 
 use git2::Repository;
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::cli::Platform;
 use crate::context::Context;
@@ -88,9 +90,23 @@ pub async fn branch_to_branch(
         if let Some(prompt) = args_prompt {
             ollama.prompt = prompt;
         }
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{spinner:.cyan} {msg}")
+                .unwrap(),
+        );
+        spinner.set_message(format!("Asking Ollama to categorize the commits({})...", ollama.model));
+        spinner.enable_steady_tick(Duration::from_millis(80));
+
         let result = summarize_with_ollama(
             &description, &ollama
-        ).await.or_else(|_e| Err(ShipItError::Error("Failed to summarize with Ollama!".to_string())))?;
+        ).await.or_else(|_e| Err(ShipItError::Error("Failed to summarize with Ollama!".to_string())));
+
+        spinner.finish_and_clear();
+
+        let result = result?;
         println!("The merge request description is:\n\n{}", result);
         result
     } else {

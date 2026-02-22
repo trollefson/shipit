@@ -18,3 +18,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.0.3"
 confy = "2.0.0"
 octocrab = "0.41"
+indicatif = "0.17"
