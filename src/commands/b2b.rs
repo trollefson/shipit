@@ -7,7 +7,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::cli::Platform;
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_merge_request, Github, Gitlab, summarize_with_ollama};
+use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_merge_request, Github, Gitlab, summarize_with_agent, OllamaAgent};
 
 pub async fn branch_to_branch(
     ctx: &Context,
@@ -92,10 +92,6 @@ pub async fn branch_to_branch(
 
         // ask a local llm to summarize these commit messages
         if ctx.settings.shipit.ai {
-            let mut ollama = ctx.settings.ollama.clone();
-            if let Some(prompt) = args_prompt {
-                ollama.prompt = prompt;
-            }
             let spinner = ProgressBar::new_spinner();
             spinner.set_style(
                 ProgressStyle::default_spinner()
@@ -103,18 +99,31 @@ pub async fn branch_to_branch(
                     .template("{spinner:.cyan} {msg}")
                     .unwrap(),
             );
-            spinner.set_message(format!("Asking Ollama to categorize the commits({})...", ollama.model));
-            spinner.enable_steady_tick(Duration::from_millis(80));
 
-            let result = summarize_with_ollama(
-                &description, &ollama
-            ).await.or_else(|_e| Err(ShipItError::Error("Failed to summarize with Ollama!".to_string())));
+            match ctx.settings.shipit.agent.as_str() {
+                "ollama" => {
+                    let mut ollama = ctx.settings.ollama.clone();
+                    if let Some(prompt) = args_prompt {
+                        ollama.prompt = prompt;
+                    }
+                    spinner.set_message(format!("Generating merge request description with {}...", ollama.model));
+                    spinner.enable_steady_tick(Duration::from_millis(80));
 
-            spinner.finish_and_clear();
+                    let agent = OllamaAgent::new(ollama);
+                    let result = summarize_with_agent(&description, &agent)
+                        .await
+                        .map_err(|_e| ShipItError::Error("Failed to summarize with agent!".to_string()));
 
-            let result = result?;
-            println!("The merge request description is:\n\n{}", result);
-            result
+                    spinner.finish_and_clear();
+
+                    let result = result?;
+                    println!("The merge request description is:\n\n{}", result);
+                    result
+                }
+                unknown => {
+                    return Err(ShipItError::Error(format!("Unknown ai agent: '{}'", unknown)));
+                }
+            }
         } else {
             description
         }

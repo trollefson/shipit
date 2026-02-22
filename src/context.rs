@@ -1,4 +1,4 @@
-use crate::cli::{Cli, Commands};
+use crate::cli::{Agent, Cli, Commands};
 use crate::settings::Settings;
 
 pub struct Context {
@@ -10,7 +10,12 @@ impl Context {
         let mut settings: Settings = confy::load("shipit", None)?;
         match &args.command {
             Commands::B2b { ai, dryrun, .. } => {
-                settings.shipit.ai = *ai;
+                if let Some(agent) = ai {
+                    settings.shipit.ai = true;
+                    settings.shipit.agent = match agent {
+                        Agent::Ollama => "ollama".to_string(),
+                    };
+                }
                 settings.shipit.dryrun = *dryrun;
             }
             Commands::Config { .. } => {}

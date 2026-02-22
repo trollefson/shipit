@@ -6,6 +6,11 @@ pub enum Platform {
     Gitlab,
 }
 
+#[derive(Debug, Clone, ValueEnum)]
+pub enum Agent {
+    Ollama,
+}
+
 #[derive(Parser)]
 pub struct Cli {
     #[command(subcommand)]
@@ -20,9 +25,10 @@ pub enum Commands {
         target: String,
         #[arg(
             long,
-            help = "Use ai to generate the merge/pull request title and description"
+            value_enum,
+            help = "Use ai to generate the merge/pull request title and description (e.g., ollama)"
         )]
-        ai: bool,
+        ai: Option<Agent>,
         #[arg(
             long,
             help = "Print the merge/pull request details without creating it"
