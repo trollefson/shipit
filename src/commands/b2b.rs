@@ -5,7 +5,7 @@ use git2::Repository;
 use crate::cli::Platform;
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{open_github_pr, open_gitlab_mr, summarize_with_ollama};
+use crate::common::{open_github_pr, open_gitlab_mr, push_to_origin, summarize_with_ollama, GitProvider};
 
 pub async fn branch_to_branch(
     ctx: &Context,
@@ -118,17 +118,21 @@ pub async fn branch_to_branch(
         if parts.len() != 2 {
             return Err(ShipItError::Error("'--id' must be in 'owner/repo' format for GitHub.".to_string()));
         }
-        let (owner, repo) = (parts[0], parts[1]);
         let token = ctx.settings.github.token.as_deref().unwrap();
+        push_to_origin(&repo, &args_source, token, GitProvider::GitHub)
+            .map_err(|e| ShipItError::Error(format!("Failed to push to origin: {}", e)))?;
+        let (owner, gh_repo) = (parts[0], parts[1]);
         let pr_url = open_github_pr(
             &args_source, &args_target, &ctx.settings.github.domain,
-            token, owner, repo, &summary,
+            token, owner, gh_repo, &summary,
         ).await.map_err(|e| ShipItError::Error(format!("Failed to open a GitHub PR: {}", e)))?;
         println!("\n\nThe pull request is available at:\n\n{}", pr_url);
     } else if is_gitlab {
         let project_id: u64 = id.parse()
             .map_err(|_| ShipItError::Error("'--id' must be a numeric project ID for GitLab.".to_string()))?;
         let token = ctx.settings.gitlab.token.as_deref().unwrap();
+        push_to_origin(&repo, &args_source, token, GitProvider::GitLab)
+            .map_err(|e| ShipItError::Error(format!("Failed to push to origin: {}", e)))?;
         let mr_url = open_gitlab_mr(
             &args_source, &args_target, &ctx.settings.gitlab.domain,
             token, &project_id, &summary,

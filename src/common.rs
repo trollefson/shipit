@@ -1,3 +1,4 @@
+use git2::{Cred, PushOptions, RemoteCallbacks, Repository};
 use gitlab::api::{projects, AsyncQuery};
 use gitlab::Gitlab;
 use octocrab::OctocrabBuilder;
@@ -6,6 +7,38 @@ use serde_json::json;
 
 use crate::error::ShipItError;
 use crate::settings::OllamaSettings;
+
+pub enum GitProvider {
+    GitHub,
+    GitLab,
+}
+
+pub fn push_to_origin(
+    repo: &Repository,
+    branch_name: &str,
+    token: &str,
+    provider: GitProvider
+) -> Result<(), ShipItError> {
+    let mut remote = repo.find_remote("origin").map_err(|e| ShipItError::Git(e))?;
+    let mut callbacks = RemoteCallbacks::new();
+
+    let auth_user = match provider {
+        GitProvider::GitHub => "git",
+        GitProvider::GitLab => "oauth2",
+    };
+
+    callbacks.credentials(move |_url, _user_from_url, _allowed| {
+        Cred::userpass_plaintext(auth_user, token)
+    });
+
+    let mut push_options = PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+
+    let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
+    remote.push(&[&refspec], Some(&mut push_options)).map_err(|e| ShipItError::Git(e))?;
+
+    Ok(())
+}
 
 
 pub(crate) async fn open_github_pr(
