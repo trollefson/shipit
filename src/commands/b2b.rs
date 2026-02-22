@@ -7,7 +7,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::cli::Platform;
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_github_pr, open_gitlab_mr, summarize_with_ollama};
+use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_merge_request, Github, Gitlab, summarize_with_ollama};
 
 pub async fn branch_to_branch(
     ctx: &Context,
@@ -190,30 +190,36 @@ pub async fn branch_to_branch(
         std::io::stdin().read_line(&mut input).map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
     }
 
-    if is_github {
+    let url = if is_github {
         let parts: Vec<&str> = resolved_id.splitn(2, '/').collect();
         if parts.len() != 2 {
             return Err(ShipItError::Error(format!("GitHub project identifier '{}' must be in 'owner/repo' format.", resolved_id)));
         }
-        let token = ctx.settings.github.token.as_deref().unwrap();
         let (owner, gh_repo) = (parts[0], parts[1]);
-        let pr_url = open_github_pr(
-            &args_source, &args_target, &ctx.settings.github.domain,
-            token, owner, gh_repo, &summary,
-        ).await.map_err(|e| ShipItError::Error(format!("Failed to open a GitHub PR: {}", e)))?;
-        println!("\n\nThe pull request is available at:\n\n{}", pr_url);
+        let platform = Github {
+            domain: ctx.settings.github.domain.clone(),
+            token: ctx.settings.github.token.as_deref().unwrap().to_string(),
+            owner: owner.to_string(),
+            repo: gh_repo.to_string(),
+        };
+        open_merge_request(&platform, &args_source, &args_target, &summary)
+            .await
+            .map_err(|e| ShipItError::Error(format!("Failed to open a GitHub PR: {}", e)))?
     } else if is_gitlab {
         let project_id: u64 = resolved_id.parse()
             .map_err(|_| ShipItError::Error(format!("GitLab project identifier '{}' must be a numeric project ID.", resolved_id)))?;
-        let token = ctx.settings.gitlab.token.as_deref().unwrap();
-        let mr_url = open_gitlab_mr(
-            &args_source, &args_target, &ctx.settings.gitlab.domain,
-            token, &project_id, &summary,
-        ).await.map_err(|e| ShipItError::Error(format!("Failed to open a GitLab MR: {}", e)))?;
-        println!("\n\nThe merge request is available at:\n\n{}", mr_url["web_url"]);
+        let platform = Gitlab {
+            domain: ctx.settings.gitlab.domain.clone(),
+            token: ctx.settings.gitlab.token.as_deref().unwrap().to_string(),
+            project_id,
+        };
+        open_merge_request(&platform, &args_source, &args_target, &summary)
+            .await
+            .map_err(|e| ShipItError::Error(format!("Failed to open a GitLab MR: {}", e)))?
     } else {
         return Err(ShipItError::Error("Could not determine platform. Use '--platform github' or '--platform gitlab' to specify it explicitly.".to_string()));
-    }
+    };
+    println!("\n\nThe request is available at:\n\n{}", url);
 
     Ok(())
 }
