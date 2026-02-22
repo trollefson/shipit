@@ -74,41 +74,52 @@ shipit b2b develop main --dryrun
 ### `b2b` — Branch to Branch
 
 ```
-shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <project-id>]
+shipit b2b <source> <target> [--ai] [--dryrun] [--dir <path>] [--id <identifier>] [--platform <github|gitlab>] [--remote <name>]
 ```
 
-| Argument / Flag      | Description |
-|----------------------|-------------|
-| `source`             | Branch with new commits (e.g. `develop`) |
-| `target`             | Destination branch (e.g. `main`) |
-| `--ai`               | Enable Ollama LLM to generate categorized release notes |
-| `--dryrun`           | Preview the merge request description without creating it |
-| `--dir <path>`       | Path to the git repository (defaults to current directory) |
-| `--id <project-id>`  | Project identifier — `owner/repo` for GitHub, numeric ID for GitLab |
+| Argument / Flag                   | Description |
+|-----------------------------------|-------------|
+| `source`                          | Branch with new commits (e.g. `develop`) |
+| `target`                          | Destination branch (e.g. `main`) |
+| `--ai`                            | Enable Ollama LLM to generate categorized release notes |
+| `--dryrun`                        | Preview the merge request description without creating it |
+| `--dir <path>`                    | Path to the git repository (defaults to current directory) |
+| `--id <identifier>`               | Project identifier — `owner/repo` for GitHub, numeric ID for GitLab (auto-detected from remote URL if omitted) |
+| `--platform <github\|gitlab>`     | Force a specific platform (overrides auto-detection from the remote URL) |
+| `--remote <name>`                 | Git remote to push to and detect platform from (defaults to `origin`) |
 
 **What happens:**
 
 1. Finds all commits on `source` that aren't on `target`
-2. If `--ai` is set, sends the commit log to a local LLM running with Ollama and generate categorized release notes (features, fixes, infra, docs)
-3. Opens a merge request on GitLab or Github with the description
+2. If `--ai` is set, sends the commit log to a local LLM running with Ollama and generates categorized release notes (features, fixes, infra, docs)
+3. Pushes the `source` branch to the remote
+4. Opens a pull/merge request on GitHub or GitLab with the description
 
 **Examples:**
 
 ```bash
-# GitHub — --id uses owner/repo format
-shipit b2b develop main --id owner/repo
+# Auto-detect platform and project from the origin remote URL
+shipit b2b develop main
 
-# GitLab — --id uses a numeric project ID
+# With llm generated release notes
+shipit b2b develop main --ai
+
+# Preview the description without creating the request
+shipit b2b develop main --ai --dryrun
+
+# Explicitly specify the project identifier
+shipit b2b develop main --id owner/repo
 shipit b2b develop main --id 12345678
 
-# With AI-generated release notes
-shipit b2b develop main --id owner/repo --ai
+# Override the detected platform
+shipit b2b develop main --platform github
+shipit b2b develop main --platform gitlab
 
-# Dry run — see the description without creating the MR
-shipit b2b develop main --id owner/repo --ai --dryrun
+# Use a different remote
+shipit b2b develop main --remote upstream
 
 # Point at a repo outside the current directory
-shipit b2b develop main --id owner/repo --ai --dir /path/to/repo
+shipit b2b develop main --dir /path/to/repo
 ```
 
 ---
