@@ -6,7 +6,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_merge_request, Github, Gitlab, summarize_with_agent, OllamaAgent};
+use crate::common::{categorize_commits, format_categorized_commits, lookup_github_identifier, lookup_gitlab_project_id, open_merge_request, Github, Gitlab, summarize_with_agent, OllamaAgent};
 
 pub async fn branch_to_branch(
     ctx: &Context,
@@ -118,6 +118,13 @@ pub async fn branch_to_branch(
                     println!("The merge request description is:\n\n{}", result);
                     result
                 }
+                "shipit" => {
+                    let refs: Vec<&str> = messages.iter().map(|s| s.as_str()).collect();
+                    let categorized = categorize_commits(&refs);
+                    let formatted = format_categorized_commits(&categorized);
+                    println!("The merge request description is:\n\n{}", formatted);
+                    formatted
+                }
                 unknown => {
                     return Err(ShipItError::Error(format!("Unknown ai agent: '{}'", unknown)));
                 }
@@ -179,7 +186,7 @@ pub async fn branch_to_branch(
                 }
                 None => true,
             },
-            Err(_) => true, // no remote tracking branch yet
+            Err(_) => true,
         }
     };
 
@@ -461,6 +468,26 @@ mod tests {
             "origin".to_string(),
             None,
             Some("Provided description".to_string()),
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_shipit_agent_categorizes_commits_and_returns_ok() {
+        let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
+
+        let ctx = make_ctx(true, true, "shipit", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            "origin".to_string(),
+            None,
+            None,
         )
         .await;
 

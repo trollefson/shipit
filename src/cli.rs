@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Debug, Clone, ValueEnum)]
 pub enum Agent {
     Ollama,
+    Shipit,
 }
 
 #[derive(Parser)]
@@ -20,9 +21,9 @@ pub enum Commands {
         #[arg(
             long,
             value_enum,
-            help = "Use ai to generate the merge/pull request title and description (e.g., ollama)"
+            help = "Use an agent to generate the merge/pull request title and description (e.g., ollama, shipit)"
         )]
-        ai: Option<Agent>,
+        agent: Option<Agent>,
         #[arg(
             long,
             help = "Print the merge/pull request details without creating it"

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use gitlab::api::{projects, AsyncQuery};
 use gitlab::Gitlab as GitlabClient;
 use octocrab::OctocrabBuilder;
@@ -37,11 +39,7 @@ impl Agent for OllamaAgent {
                 "model": self.settings.model,
                 "prompt": prompt,
                 "stream": false,
-                "options": {
-                    "temperature": self.settings.options.temperature,
-                    "top_p": self.settings.options.top_p,
-                    "seed": self.settings.options.seed
-                }
+                "options": self.settings.options,
             }))
             .send()
             .await
@@ -210,6 +208,71 @@ pub(crate) async fn open_merge_request<P: GitPlatform>(
 }
 
 
+/// Formats a map of categorized commits into a markdown string.
+/// Each key becomes a `##` subheading with its commits listed as bullet points.
+/// Keys are sorted alphabetically and empty categories are omitted.
+pub(crate) fn format_categorized_commits(commits: &HashMap<String, Vec<String>>) -> String {
+    let mut keys: Vec<&String> = commits.keys().collect();
+    keys.sort();
+
+    let mut sections: Vec<String> = Vec::new();
+    for key in keys {
+        let entries = &commits[key];
+        if entries.is_empty() {
+            continue;
+        }
+        // replace '_' with ' ' and uppercase each heading
+        let heading = key
+            .split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut section = format!("## {}\n", heading);
+        for commit in entries {
+            section.push_str(&format!("- {}\n", commit));
+        }
+        sections.push(section);
+    }
+
+    sections.join("\n")
+}
+
+/// Categorizes conventional commits into features, bug fixes, infrastructure, docs, and misc.
+///
+/// The key for each category in the returned map is one of:
+/// `"features"`, `"bug_fixes"`, `"infrastructure"`, `"docs"`, `"misc"`.
+pub(crate) fn categorize_commits(commits: &[&str]) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = [
+        "features",
+        "bug_fixes",
+        "infrastructure",
+        "docs",
+        "misc",
+    ]
+    .iter()
+    .map(|&k| (k.to_string(), Vec::new()))
+    .collect();
+
+    for &commit in commits {
+        let commit_type = commit.split(['(', ':']).next().unwrap_or("").trim();
+        let category = match commit_type {
+            "feat" => "features",
+            "fix" => "bug_fixes",
+            "ci" | "build" | "chore" | "perf" | "refactor" | "style" | "test" => "infrastructure",
+            "docs" => "docs",
+            _ => "misc",
+        };
+        map.entry(category.to_string()).or_default().push(commit.to_string());
+    }
+
+    map
+}
 
 #[cfg(test)]
 mod tests {
@@ -388,5 +451,165 @@ mod tests {
         let agent = OllamaAgent::new(ollama_settings(server.address().port()));
         let result = summarize_with_agent("text", &agent).await;
         assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[test]
+    fn test_categorize_commits_empty_input() {
+        let result = categorize_commits(&[]);
+        assert!(result["features"].is_empty());
+        assert!(result["bug_fixes"].is_empty());
+        assert!(result["infrastructure"].is_empty());
+        assert!(result["docs"].is_empty());
+        assert!(result["misc"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_features() {
+        let commits = vec!["feat: add login page", "feat(auth): add OAuth support"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["features"], vec!["feat: add login page", "feat(auth): add OAuth support"]);
+        assert!(result["bug_fixes"].is_empty());
+        assert!(result["infrastructure"].is_empty());
+        assert!(result["docs"].is_empty());
+        assert!(result["misc"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_bug_fixes() {
+        let commits = vec!["fix: resolve null pointer", "fix(ui): correct button alignment"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["bug_fixes"], vec!["fix: resolve null pointer", "fix(ui): correct button alignment"]);
+        assert!(result["features"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_infrastructure() {
+        let commits = vec![
+            "ci: add github actions",
+            "build: update dependencies",
+            "chore: clean up temp files",
+            "perf: cache expensive query",
+            "refactor: extract helper",
+            "style: fix trailing whitespace",
+            "test: add unit tests",
+        ];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["infrastructure"].len(), 7);
+        assert!(result["features"].is_empty());
+        assert!(result["bug_fixes"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_docs() {
+        let commits = vec!["docs: update README", "docs(api): add endpoint docs"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["docs"], vec!["docs: update README", "docs(api): add endpoint docs"]);
+        assert!(result["features"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_misc() {
+        let commits = vec!["wip: half done feature", "unknown: some commit"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["misc"], vec!["wip: half done feature", "unknown: some commit"]);
+        assert!(result["features"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_mixed() {
+        let commits = vec![
+            "feat: add feature",
+            "fix: fix bug",
+            "docs: update docs",
+            "ci: add workflow",
+            "wip: in progress",
+        ];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["features"], vec!["feat: add feature"]);
+        assert_eq!(result["bug_fixes"], vec!["fix: fix bug"]);
+        assert_eq!(result["docs"], vec!["docs: update docs"]);
+        assert_eq!(result["infrastructure"], vec!["ci: add workflow"]);
+        assert_eq!(result["misc"], vec!["wip: in progress"]);
+    }
+
+    #[test]
+    fn test_format_categorized_commits_empty_map() {
+        let map: HashMap<String, Vec<String>> = HashMap::new();
+        assert_eq!(format_categorized_commits(&map), "");
+    }
+
+    #[test]
+    fn test_format_categorized_commits_skips_empty_categories() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec![]);
+        map.insert("bug_fixes".to_string(), vec![]);
+        assert_eq!(format_categorized_commits(&map), "");
+    }
+
+    #[test]
+    fn test_format_categorized_commits_single_category_single_commit() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec!["feat: add login".to_string()]);
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Features\n- feat: add login\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_single_category_multiple_commits() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert(
+            "bug_fixes".to_string(),
+            vec![
+                "fix: resolve null pointer".to_string(),
+                "fix(ui): correct alignment".to_string(),
+            ],
+        );
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Bug Fixes\n- fix: resolve null pointer\n- fix(ui): correct alignment\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_single_category_three_commits() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert(
+            "infrastructure".to_string(),
+            vec![
+                "ci: add github actions".to_string(),
+                "build: update dependencies".to_string(),
+                "chore: remove unused files".to_string(),
+            ],
+        );
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Infrastructure\n- ci: add github actions\n- build: update dependencies\n- chore: remove unused files\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_multiple_categories_sorted() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec!["feat: add search".to_string()]);
+        map.insert("bug_fixes".to_string(), vec!["fix: crash on startup".to_string()]);
+        map.insert("docs".to_string(), vec!["docs: update README".to_string()]);
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Bug Fixes\n- fix: crash on startup\n\n## Docs\n- docs: update README\n\n## Features\n- feat: add search\n"
+        );
+    }
+
+    #[test]
+    fn test_format_categorized_commits_mixed_empty_and_populated() {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        map.insert("features".to_string(), vec!["feat: new flag".to_string()]);
+        map.insert("misc".to_string(), vec![]);
+        map.insert("docs".to_string(), vec!["docs: fix typo".to_string()]);
+        assert_eq!(
+            format_categorized_commits(&map),
+            "## Docs\n- docs: fix typo\n\n## Features\n- feat: new flag\n"
+        );
     }
 }

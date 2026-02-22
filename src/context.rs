@@ -9,11 +9,12 @@ impl Context {
     pub fn from_cli(args: &Cli) -> Result<Self, Box<dyn std::error::Error>> {
         let mut settings: Settings = confy::load("shipit", None)?;
         match &args.command {
-            Commands::B2b { ai, dryrun, .. } => {
-                if let Some(agent) = ai {
+            Commands::B2b { agent, dryrun, .. } => {
+                if let Some(selected) = agent {
                     settings.shipit.ai = true;
-                    settings.shipit.agent = match agent {
+                    settings.shipit.agent = match selected {
                         Agent::Ollama => "ollama".to_string(),
+                        Agent::Shipit => "shipit".to_string(),
                     };
                 }
                 settings.shipit.dryrun = *dryrun;
