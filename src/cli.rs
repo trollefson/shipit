@@ -17,13 +17,13 @@ pub enum Commands {
     B2b {
         source: String,
         target: String,
-        #[arg(long)]
+        #[arg(long, help = "Use AI to generate the merge/pull request title and description")]
         ai: bool,
-        #[arg(long)]
+        #[arg(long, help = "Print the merge/pull request details without creating it")]
         dryrun: bool,
-        #[arg(long)]
+        #[arg(long, help = "Path to the git repository (defaults to current directory)")]
         dir: Option<String>,
-        #[arg(long, required_unless_present = "dryrun", help = "GitLab project ID or GitHub 'owner/repo'")]
+        #[arg(long, help = "GitLab project ID or GitHub 'owner/repo' (auto-detected from remote URL if not provided)")]
         id: Option<String>,
         #[arg(long, value_enum, help = "Platform to open the merge/pull request on (overrides auto-detection)")]
         platform: Option<Platform>,
