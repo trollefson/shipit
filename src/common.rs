@@ -111,9 +111,9 @@ pub(crate) async fn open_gitlab_mr(
         .title(format!("{} to {}", source, target))
         .description(description)
         .remove_source_branch(true)
-        .build().map_err(|_e| ShipItError::Error("Failed to build a Gitlab MR!".to_string()))?;
+        .build().map_err(|e| ShipItError::Error(format!("Failed to build a Gitlab MR: {}", e)))?;
 
-    let merge_request: serde_json::Value = create_mr.query_async(&client).await.map_err(|_e| ShipItError::Error("Failed to create a Gitlab merge request!".to_string()))?;
+    let merge_request: serde_json::Value = create_mr.query_async(&client).await.map_err(|e| ShipItError::Error(format!("Failed to create a Gitlab merge request: {}", e)))?;
 
     Ok(merge_request)
 }
