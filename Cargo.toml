@@ -19,3 +19,6 @@ toml = "1.0.3"
 confy = "2.0.0"
 octocrab = "0.41"
 indicatif = "0.17"
+
+[dev-dependencies]
+wiremock = "0.6"

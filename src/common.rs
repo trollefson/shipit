@@ -181,3 +181,155 @@ pub(crate) async fn summarize_with_ollama(text: &str, ollama: &OllamaSettings) -
 
     Ok(summary.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::ShipItError;
+    use crate::settings::{OllamaOptions, OllamaSettings};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn test_extract_repo_path_ssh_url() {
+        assert_eq!(
+            extract_repo_path("git@github.com:owner/repo.git"),
+            Some("owner/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_repo_path_returns_none_for_empty_string() {
+        assert_eq!(extract_repo_path(""), None);
+    }
+
+    #[test]
+    fn test_extract_repo_path_returns_none_for_empty_ssh_path() {
+        assert_eq!(extract_repo_path("git@github.com:"), None);
+    }
+
+    #[test]
+    fn test_lookup_github_identifier_success() {
+        let result = lookup_github_identifier("git@github.com:owner/repo.git");
+        assert_eq!(result.unwrap(), "owner/repo");
+    }
+
+    #[test]
+    fn test_lookup_github_identifier_returns_error_for_unparseable_url() {
+        let result = lookup_github_identifier("");
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_gitlab_project_id_returns_error_for_unparseable_url() {
+        let result = lookup_gitlab_project_id("", "gitlab.com", "token").await;
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_gitlab_project_id_returns_gitlab_error_for_invalid_domain() {
+        let result = lookup_gitlab_project_id(
+            "git@host:owner/repo.git",
+            "://invalid",
+            "token",
+        )
+        .await;
+        assert!(matches!(result, Err(ShipItError::Gitlab(_))));
+    }
+
+    struct MockPlatformSuccess;
+    struct MockPlatformError;
+
+    impl GitPlatform for MockPlatformSuccess {
+        async fn open(&self, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
+            Ok("https://github.com/owner/repo/pull/1".to_string())
+        }
+    }
+
+    impl GitPlatform for MockPlatformError {
+        async fn open(&self, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
+            Err(ShipItError::Error("platform returned an error".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_merge_request_success() {
+        let result = open_merge_request(&MockPlatformSuccess, "feat", "main", "desc").await;
+        assert_eq!(result.unwrap(), "https://github.com/owner/repo/pull/1");
+    }
+
+    #[tokio::test]
+    async fn test_open_merge_request_propagates_platform_error() {
+        let result = open_merge_request(&MockPlatformError, "feat", "main", "desc").await;
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    fn ollama_settings(port: u16) -> OllamaSettings {
+        OllamaSettings {
+            model: "test-model".to_string(),
+            domain: "127.0.0.1".to_string(),
+            port,
+            endpoint: "/api/generate".to_string(),
+            prompt: "Summarize:".to_string(),
+            options: OllamaOptions::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_summarize_with_ollama_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/generate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "response": "Generated summary" })),
+            )
+            .mount(&server)
+            .await;
+
+        let result =
+            summarize_with_ollama("some commits", &ollama_settings(server.address().port())).await;
+        assert_eq!(result.unwrap(), "Generated summary");
+    }
+
+    #[tokio::test]
+    async fn test_summarize_with_ollama_returns_http_error_on_connection_failure() {
+        let closed_port = {
+            let server = MockServer::start().await;
+            server.address().port()
+        };
+        let result = summarize_with_ollama("text", &ollama_settings(closed_port)).await;
+        assert!(matches!(result, Err(ShipItError::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn test_summarize_with_ollama_returns_http_error_on_invalid_json_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/generate"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not valid json"))
+            .mount(&server)
+            .await;
+
+        let result =
+            summarize_with_ollama("text", &ollama_settings(server.address().port())).await;
+        assert!(matches!(result, Err(ShipItError::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn test_summarize_with_ollama_returns_error_when_response_field_missing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/generate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "not_response": "oops" })),
+            )
+            .mount(&server)
+            .await;
+
+        let result =
+            summarize_with_ollama("text", &ollama_settings(server.address().port())).await;
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+}

@@ -12,8 +12,13 @@ env:
   TAP_REPO: trollefson/homebrew-shipit
 
 jobs:
+  test:
+    name: Test Suite
+    uses: ./.github/workflows/test.yml
+
   build:
     name: Build · ${{ matrix.target }}
+    needs: test
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
