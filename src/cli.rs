@@ -1,4 +1,10 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum Platform {
+    Github,
+    Gitlab,
+}
 
 #[derive(Parser)]
 pub struct Cli {
@@ -19,6 +25,8 @@ pub enum Commands {
         dir: Option<String>,
         #[arg(long, required_unless_present = "dryrun", help = "GitLab project ID or GitHub 'owner/repo'")]
         id: Option<String>,
+        #[arg(long, value_enum, help = "Platform to open the merge/pull request on (overrides auto-detection)")]
+        platform: Option<Platform>,
     },
     Config {
         #[command(subcommand)]

@@ -2,6 +2,7 @@ use std::env;
 
 use git2::Repository;
 
+use crate::cli::Platform;
 use crate::context::Context;
 use crate::error::ShipItError;
 use crate::common::{open_github_pr, open_gitlab_mr, summarize_with_ollama};
@@ -12,6 +13,7 @@ pub async fn branch_to_branch(
     args_target: String,
     args_dir: Option<String>,
     args_id: Option<String>,
+    args_platform: Option<Platform>,
 ) -> Result<(), ShipItError> {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
@@ -95,17 +97,17 @@ pub async fn branch_to_branch(
         return Ok(());
     }
 
-    // detect platform from the origin remote URL
-    let origin_url = {
-        let remote = repo.find_remote("origin")
-            .map_err(|e| ShipItError::Git(e))?;
-        remote.url()
-            .ok_or_else(|| ShipItError::Error("The 'origin' remote has no URL.".to_string()))?
-            .to_string()
+    // determine the platform to use
+    // use --platform flag if provided otherwise detect from origin remote url
+    let (is_github, is_gitlab) = match args_platform {
+        Some(Platform::Github) => (true, false),
+        Some(Platform::Gitlab) => (false, true),
+        None => {
+            let remote = repo.find_remote("origin").map_err(|e| ShipItError::Git(e))?;
+            let origin_url = remote.url().ok_or_else(|| ShipItError::Error("The 'origin' remote has no URL.".to_string()))?.to_string();
+            (origin_url.contains("github"), origin_url.contains("gitlab"))
+        }
     };
-
-    let is_github = origin_url.contains("github");
-    let is_gitlab = origin_url.contains("gitlab");
 
     // handle opening a github pr or gitlab mr
     let id = args_id.as_deref()
@@ -133,7 +135,7 @@ pub async fn branch_to_branch(
         ).await.map_err(|e| ShipItError::Error(format!("Failed to open a GitLab MR: {}", e)))?;
         println!("\n\nThe merge request is available at:\n\n{}", mr_url["web_url"]);
     } else {
-        return Err(ShipItError::Error(format!("Could not determine platform from origin URL: '{}'", origin_url)));
+        return Err(ShipItError::Error("Could not determine platform. Use '--platform github' or '--platform gitlab' to specify it explicitly.".to_string()));
     }
 
     Ok(())
