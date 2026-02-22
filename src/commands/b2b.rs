@@ -232,3 +232,436 @@ pub async fn branch_to_branch(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Platform;
+    use crate::context::Context;
+    use crate::settings::{
+        GithubSettings, GitlabSettings, OllamaSettings, Settings, ShipitSettings,
+    };
+    use git2::{Repository, Signature};
+    use tempfile::TempDir;
+
+    fn make_ctx(
+        dryrun: bool,
+        ai: bool,
+        agent: &str,
+        gitlab_token: Option<&str>,
+        github_token: Option<&str>,
+    ) -> Context {
+        Context {
+            settings: Settings {
+                shipit: ShipitSettings {
+                    agent: agent.to_string(),
+                    ai,
+                    commits: "custom".to_string(),
+                    dryrun,
+                },
+                ollama: OllamaSettings::default(),
+                gitlab: GitlabSettings {
+                    domain: "gitlab.com".to_string(),
+                    token: gitlab_token.map(|t| t.to_string()),
+                },
+                github: GithubSettings {
+                    domain: "github.com".to_string(),
+                    token: github_token.map(|t| t.to_string()),
+                },
+            },
+        }
+    }
+
+    /// Initialises a bare repo with a single base commit on HEAD and two named
+    /// branches: `target_name` at the base commit and `source_name` with one
+    /// extra commit on top.  Returns (TempDir, Repository, base_oid, source_oid).
+    fn setup_diverged_repo(
+        source_name: &str,
+        target_name: &str,
+    ) -> (TempDir, Repository, git2::Oid, git2::Oid) {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+
+        let (base_oid, source_oid) = {
+            let tree = repo.find_tree(tree_id).unwrap();
+
+            let base_oid = repo
+                .commit(Some("HEAD"), &sig, &sig, "base commit", &tree, &[])
+                .unwrap();
+            let base_commit = repo.find_commit(base_oid).unwrap();
+
+            repo.branch(target_name, &base_commit, false).unwrap();
+            repo.branch(source_name, &base_commit, false).unwrap();
+
+            let source_ref = format!("refs/heads/{}", source_name);
+            let source_oid = repo
+                .commit(
+                    Some(&source_ref),
+                    &sig,
+                    &sig,
+                    "feat: add something",
+                    &tree,
+                    &[&base_commit],
+                )
+                .unwrap();
+
+            (base_oid, source_oid)
+        };
+
+        (dir, repo, base_oid, source_oid)
+    }
+
+    /// Creates a remote tracking ref so that `needs_push` evaluates to `false`
+    /// (local and remote are at the same commit).
+    fn pin_remote_tracking(repo: &Repository, remote: &str, branch: &str, oid: git2::Oid) {
+        let ref_name = format!("refs/remotes/{}/{}", remote, branch);
+        repo.reference(&ref_name, oid, false, "test").unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_missing_source_branch_returns_git_error() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = Signature::now("t", "t@t.com").unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+
+        let ctx = make_ctx(false, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "does-not-exist".to_string(),
+            "main".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Git(_))));
+    }
+
+    #[tokio::test]
+    async fn test_missing_target_branch_without_description_returns_git_error() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = Signature::now("t", "t@t.com").unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let base_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        let base_commit = repo.find_commit(base_oid).unwrap();
+        repo.branch("source", &base_commit, false).unwrap();
+
+        let ctx = make_ctx(false, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "does-not-exist".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            None, // no description → code must look up the target branch
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Git(_))));
+    }
+
+    #[tokio::test]
+    async fn test_description_skips_target_branch_lookup() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = Signature::now("t", "t@t.com").unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let base_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        let base_commit = repo.find_commit(base_oid).unwrap();
+        repo.branch("source", &base_commit, false).unwrap();
+
+        let ctx = make_ctx(true, false, "ollama", None, None); // dryrun → exits before remote
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "nonexistent-target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            Some("My custom description".to_string()),
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_no_commits_between_branches_returns_ok_early() {
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = Signature::now("t", "t@t.com").unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let base_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        let base_commit = repo.find_commit(base_oid).unwrap();
+        repo.branch("source", &base_commit, false).unwrap();
+        repo.branch("target", &base_commit, false).unwrap();
+
+        let ctx = make_ctx(false, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_dryrun_exits_after_commit_discovery_without_reaching_remote() {
+        let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
+
+        let ctx = make_ctx(true, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_dryrun_with_description_exits_without_reaching_remote() {
+        let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
+
+        let ctx = make_ctx(true, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            Some("Provided description".to_string()),
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_unknown_agent_name_returns_shipit_error() {
+        let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
+
+        let ctx = make_ctx(false, true, "unknown_agent", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Error(msg)) if msg.contains("unknown_agent")));
+    }
+
+    #[tokio::test]
+    async fn test_missing_remote_returns_git_error() {
+        let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
+
+        let ctx = make_ctx(false, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            Some("desc".to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Git(_))));
+    }
+
+    #[tokio::test]
+    async fn test_url_without_github_or_gitlab_returns_error() {
+        let (dir, repo, _, _) = setup_diverged_repo("source", "target");
+        repo.remote("origin", "https://bitbucket.org/owner/repo.git")
+            .unwrap();
+
+        let ctx = make_ctx(false, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            Some("desc".to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn test_auto_detect_gitlab_url_without_token_returns_error() {
+        let (dir, repo, _, _) = setup_diverged_repo("source", "target");
+        repo.remote("origin", "https://gitlab.com/owner/repo.git")
+            .unwrap();
+
+        let ctx = make_ctx(false, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            None,
+            "origin".to_string(),
+            None,
+            Some("desc".to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn test_platform_github_flag_overrides_gitlab_url() {
+        let (dir, repo, _, source_oid) = setup_diverged_repo("source", "target");
+        repo.remote("origin", "https://gitlab.com/owner/repo.git")
+            .unwrap();
+        pin_remote_tracking(&repo, "origin", "source", source_oid);
+
+        let ctx = make_ctx(false, false, "ollama", None, Some("fake-token"));
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            Some("no-slash".to_string()),
+            Some(Platform::Github),
+            "origin".to_string(),
+            None,
+            Some("desc".to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Error(msg)) if msg.contains("owner/repo")));
+    }
+
+    #[tokio::test]
+    async fn test_platform_gitlab_flag_overrides_github_url() {
+        let (dir, repo, _, source_oid) = setup_diverged_repo("source", "target");
+        repo.remote("origin", "https://github.com/owner/repo.git")
+            .unwrap();
+        pin_remote_tracking(&repo, "origin", "source", source_oid);
+
+        let ctx = make_ctx(false, false, "ollama", Some("fake-token"), None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            Some("not-a-number".to_string()),
+            Some(Platform::Gitlab),
+            "origin".to_string(),
+            None,
+            Some("desc".to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Error(msg)) if msg.contains("numeric")));
+    }
+
+    #[tokio::test]
+    async fn test_github_id_without_slash_returns_format_error() {
+        let (dir, repo, _, source_oid) = setup_diverged_repo("source", "target");
+        repo.remote("origin", "https://github.com/owner/repo.git")
+            .unwrap();
+        pin_remote_tracking(&repo, "origin", "source", source_oid);
+
+        let ctx = make_ctx(false, false, "ollama", None, Some("fake-token"));
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            Some("noslash".to_string()),
+            None,
+            "origin".to_string(),
+            None,
+            Some("desc".to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Error(msg)) if msg.contains("owner/repo")));
+    }
+
+    #[tokio::test]
+    async fn test_gitlab_non_numeric_project_id_returns_error() {
+        let (dir, repo, _, source_oid) = setup_diverged_repo("source", "target");
+        repo.remote("origin", "https://gitlab.com/owner/repo.git")
+            .unwrap();
+        pin_remote_tracking(&repo, "origin", "source", source_oid);
+
+        let ctx = make_ctx(false, false, "ollama", Some("fake-token"), None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            Some("not-a-number".to_string()),
+            None,
+            "origin".to_string(),
+            None,
+            Some("desc".to_string()),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ShipItError::Error(msg)) if msg.contains("numeric")));
+    }
+}
