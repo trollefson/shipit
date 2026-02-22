@@ -5,7 +5,7 @@ use git2::Repository;
 use crate::cli::Platform;
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{open_github_pr, open_gitlab_mr, push_to_origin, summarize_with_ollama, GitProvider};
+use crate::common::{lookup_github_identifier, lookup_gitlab_project_id, open_github_pr, open_gitlab_mr, push_to_remote, summarize_with_ollama, GitProvider};
 
 pub async fn branch_to_branch(
     ctx: &Context,
@@ -14,6 +14,7 @@ pub async fn branch_to_branch(
     args_dir: Option<String>,
     args_id: Option<String>,
     args_platform: Option<Platform>,
+    args_remote: String,
 ) -> Result<(), ShipItError> {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
@@ -97,30 +98,51 @@ pub async fn branch_to_branch(
         return Ok(());
     }
 
-    // determine the platform to use
-    // use --platform flag if provided otherwise detect from origin remote url
+    // always fetch the remote URL — needed both for platform detection and ID auto-lookup
+    let remote_url = {
+        let remote = repo.find_remote(&args_remote).map_err(|e| ShipItError::Git(e))?;
+        remote.url()
+            .ok_or_else(|| ShipItError::Error(format!("The '{}' remote has no URL.", args_remote)))?
+            .to_string()
+    };
+
+    // determine the platform to use:
+    // use --platform flag if provided, otherwise detect from origin remote url
     let (is_github, is_gitlab) = match args_platform {
         Some(Platform::Github) => (true, false),
         Some(Platform::Gitlab) => (false, true),
+        None => (remote_url.contains("github"), remote_url.contains("gitlab")),
+    };
+
+    // resolve the project identifier:
+    // use --id if provided, otherwise look it up from the remote url via the platform api
+    let resolved_id: String = match args_id {
+        Some(id) => id,
         None => {
-            let remote = repo.find_remote("origin").map_err(|e| ShipItError::Git(e))?;
-            let origin_url = remote.url().ok_or_else(|| ShipItError::Error("The 'origin' remote has no URL.".to_string()))?.to_string();
-            (origin_url.contains("github"), origin_url.contains("gitlab"))
+            if is_github {
+                lookup_github_identifier(&remote_url)
+                    .map_err(|e| ShipItError::Error(format!("Failed to detect GitHub owner/repo from remote URL: {}", e)))?
+            } else if is_gitlab {
+                let token = ctx.settings.gitlab.token.as_deref()
+                    .ok_or_else(|| ShipItError::Error("GitLab token is required to look up the project ID.".to_string()))?;
+                let id = lookup_gitlab_project_id(&remote_url, &ctx.settings.gitlab.domain, token).await
+                    .map_err(|e| ShipItError::Error(format!("Failed to look up GitLab project ID from remote URL: {}", e)))?;
+                println!("Auto-detected GitLab project ID: {}", id);
+                id.to_string()
+            } else {
+                return Err(ShipItError::Error("Could not determine platform. Use '--platform github' or '--platform gitlab' to specify it explicitly.".to_string()));
+            }
         }
     };
 
-    // handle opening a github pr or gitlab mr
-    let id = args_id.as_deref()
-        .ok_or_else(|| ShipItError::Error("A project identifier is required via '--id'.".to_string()))?;
-
     if is_github {
-        let parts: Vec<&str> = id.splitn(2, '/').collect();
+        let parts: Vec<&str> = resolved_id.splitn(2, '/').collect();
         if parts.len() != 2 {
-            return Err(ShipItError::Error("'--id' must be in 'owner/repo' format for GitHub.".to_string()));
+            return Err(ShipItError::Error(format!("GitHub project identifier '{}' must be in 'owner/repo' format.", resolved_id)));
         }
         let token = ctx.settings.github.token.as_deref().unwrap();
-        push_to_origin(&repo, &args_source, token, GitProvider::GitHub)
-            .map_err(|e| ShipItError::Error(format!("Failed to push to origin: {}", e)))?;
+        push_to_remote(&repo, &args_source, token, GitProvider::GitHub, &args_remote)
+            .map_err(|e| ShipItError::Error(format!("Failed to push to {}: {}", args_remote, e)))?;
         let (owner, gh_repo) = (parts[0], parts[1]);
         let pr_url = open_github_pr(
             &args_source, &args_target, &ctx.settings.github.domain,
@@ -128,11 +150,11 @@ pub async fn branch_to_branch(
         ).await.map_err(|e| ShipItError::Error(format!("Failed to open a GitHub PR: {}", e)))?;
         println!("\n\nThe pull request is available at:\n\n{}", pr_url);
     } else if is_gitlab {
-        let project_id: u64 = id.parse()
-            .map_err(|_| ShipItError::Error("'--id' must be a numeric project ID for GitLab.".to_string()))?;
+        let project_id: u64 = resolved_id.parse()
+            .map_err(|_| ShipItError::Error(format!("GitLab project identifier '{}' must be a numeric project ID.", resolved_id)))?;
         let token = ctx.settings.gitlab.token.as_deref().unwrap();
-        push_to_origin(&repo, &args_source, token, GitProvider::GitLab)
-            .map_err(|e| ShipItError::Error(format!("Failed to push to origin: {}", e)))?;
+        push_to_remote(&repo, &args_source, token, GitProvider::GitLab, &args_remote)
+            .map_err(|e| ShipItError::Error(format!("Failed to push to {}: {}", args_remote, e)))?;
         let mr_url = open_gitlab_mr(
             &args_source, &args_target, &ctx.settings.gitlab.domain,
             token, &project_id, &summary,

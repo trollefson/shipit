@@ -27,6 +27,8 @@ pub enum Commands {
         id: Option<String>,
         #[arg(long, value_enum, help = "Platform to open the merge/pull request on (overrides auto-detection)")]
         platform: Option<Platform>,
+        #[arg(long, default_value = "origin", help = "Name of the git remote to use")]
+        remote: String,
     },
     Config {
         #[command(subcommand)]
