@@ -4,6 +4,7 @@ use std::time::Duration;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
 
+use crate::cli::B2bArgs;
 use crate::context::Context;
 use crate::error::ShipItError;
 use crate::common::{
@@ -307,35 +308,25 @@ async fn open_platform_mr(
     }
 }
 
-pub async fn branch_to_branch(
-    ctx: &Context,
-    args_source: String,
-    args_target: String,
-    args_dir: Option<String>,
-    args_id: Option<String>,
-    args_remote: String,
-    args_prompt: Option<String>,
-    args_description: Option<String>,
-    args_only_merges: bool,
-) -> Result<(), ShipItError> {
-    let repo = open_repo(args_dir);
-    let source = repo.find_branch(&args_source, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
+pub async fn branch_to_branch(ctx: &Context, args: B2bArgs) -> Result<(), ShipItError> {
+    let repo = open_repo(args.dir);
+    let source = repo.find_branch(&args.source, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
 
-    let mut summary = if let Some(provided) = args_description {
+    let mut summary = if let Some(provided) = args.description {
         provided
     } else {
-        let commits = collect_commits(&repo, &source, &args_target, args_only_merges)?;
+        let commits = collect_commits(&repo, &source, &args.target, args.only_merges)?;
         let messages = collect_messages(&repo, commits)?;
-        let messages = enrich_messages(ctx, &repo, &args_remote, messages).await;
+        let messages = enrich_messages(ctx, &repo, &args.remote, messages).await;
 
         let description = messages.join(",");
 
         if description.is_empty() {
-            println!("No commits found between '{}' and '{}'. Nothing to do.", args_source, args_target);
+            println!("No commits found between '{}' and '{}'. Nothing to do.", args.source, args.target);
             return Ok(());
         }
 
-        generate_summary(ctx, &description, &messages, args_prompt).await?
+        generate_summary(ctx, &description, &messages, args.prompt).await?
     };
 
     println!("The merge request description is:\n\n{}", summary);
@@ -346,20 +337,20 @@ pub async fn branch_to_branch(
         return Ok(());
     }
 
-    let remote_url = resolve_remote_url(&repo, &args_remote)?;
+    let remote_url = resolve_remote_url(&repo, &args.remote)?;
     let (is_github, is_gitlab) = (remote_url.contains("github"), remote_url.contains("gitlab"));
-    let resolved_id = resolve_project_id(ctx, &remote_url, args_id, is_github, is_gitlab).await?;
+    let resolved_id = resolve_project_id(ctx, &remote_url, args.id, is_github, is_gitlab).await?;
 
-    if check_needs_push(&repo, &source, &args_remote, &args_source)? {
+    if check_needs_push(&repo, &source, &args.remote, &args.source)? {
         println!(
             "\n\nYour local source branch is ahead of the remote. Please push it, then press Enter to continue:\n\n  git push {} {}\n",
-            args_remote, args_source
+            args.remote, args.source
         );
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
     }
 
-    let url = open_platform_mr(ctx, &resolved_id, &args_source, &args_target, &summary, is_github, is_gitlab).await?;
+    let url = open_platform_mr(ctx, &resolved_id, &args.source, &args.target, &summary, is_github, is_gitlab).await?;
     println!("\n\nThe request is available at:\n\n{}", url);
 
     Ok(())
@@ -368,6 +359,7 @@ pub async fn branch_to_branch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::B2bArgs;
     use crate::context::Context;
     use crate::settings::{
         GithubSettings, GitlabSettings, OllamaSettings, Settings, ShipitSettings,
@@ -463,14 +455,13 @@ mod tests {
         let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "does-not-exist".to_string(),
-            "main".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None,
-            false,
+            B2bArgs {
+                source: "does-not-exist".to_string(),
+                target: "main".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -493,14 +484,14 @@ mod tests {
         let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "does-not-exist".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None, // no description → code must look up the target branch
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "does-not-exist".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                // no description → code must look up the target branch
+                ..Default::default()
+            },
         )
         .await;
 
@@ -523,14 +514,14 @@ mod tests {
         let ctx = make_ctx(true, "", None, None); // dryrun → exits before remote
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "nonexistent-target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            Some("My custom description".to_string()),
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "nonexistent-target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                description: Some("My custom description".to_string()),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -554,14 +545,13 @@ mod tests {
         let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None,
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -575,14 +565,13 @@ mod tests {
         let ctx = make_ctx(true, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None,
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -596,14 +585,14 @@ mod tests {
         let ctx = make_ctx(true, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            Some("Provided description".to_string()),
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                description: Some("Provided description".to_string()),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -617,14 +606,13 @@ mod tests {
         let ctx = make_ctx(true, "shipit", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None,
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -638,14 +626,13 @@ mod tests {
         let ctx = make_ctx(false, "unknown_agent", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None,
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -659,14 +646,14 @@ mod tests {
         let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            Some("desc".to_string()),
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                description: Some("desc".to_string()),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -682,14 +669,14 @@ mod tests {
         let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            Some("desc".to_string()),
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                description: Some("desc".to_string()),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -705,14 +692,14 @@ mod tests {
         let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            Some("desc".to_string()),
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                description: Some("desc".to_string()),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -729,14 +716,15 @@ mod tests {
         let ctx = make_ctx(false, "", None, Some("fake-token"));
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            Some("noslash".to_string()),
-            "origin".to_string(),
-            None,
-            Some("desc".to_string()),
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                id: Some("noslash".to_string()),
+                remote: "origin".to_string(),
+                description: Some("desc".to_string()),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -753,14 +741,15 @@ mod tests {
         let ctx = make_ctx(false, "", Some("fake-token"), None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            Some("not-a-number".to_string()),
-            "origin".to_string(),
-            None,
-            Some("desc".to_string()),
-            false,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                id: Some("not-a-number".to_string()),
+                remote: "origin".to_string(),
+                description: Some("desc".to_string()),
+                ..Default::default()
+            },
         )
         .await;
 
@@ -777,14 +766,14 @@ mod tests {
         let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None,
-            true,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                only_merges: true,
+                ..Default::default()
+            },
         )
         .await;
 
@@ -830,14 +819,14 @@ mod tests {
         let ctx = make_ctx(true, "", None, None);
         let result = branch_to_branch(
             &ctx,
-            "source".to_string(),
-            "target".to_string(),
-            Some(dir.path().to_str().unwrap().to_string()),
-            None,
-            "origin".to_string(),
-            None,
-            None,
-            true,
+            B2bArgs {
+                source: "source".to_string(),
+                target: "target".to_string(),
+                dir: Some(dir.path().to_str().unwrap().to_string()),
+                remote: "origin".to_string(),
+                only_merges: true,
+                ..Default::default()
+            },
         )
         .await;
 

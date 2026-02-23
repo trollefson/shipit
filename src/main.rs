@@ -24,8 +24,8 @@ async fn main() -> Result<(), ShipItError> {
 
     let ctx = Context::from_cli(&args).map_err(|_e| ShipItError::Error("Failed to parse CLI context!".to_string()))?;
     match args.command {
-        cli::Commands::B2b { source, target, dir, id, remote, prompt, description, only_merges, .. } => {
-            commands::b2b::branch_to_branch(&ctx, source, target, dir, id, remote, prompt, description, only_merges).await?;
+        cli::Commands::B2b(args) => {
+            commands::b2b::branch_to_branch(&ctx, args).await?;
         }
         cli::Commands::Config { .. } => unreachable!(),
     }
