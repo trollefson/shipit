@@ -381,7 +381,7 @@ fn find_commit_category(text: &str) -> &'static str {
         match commit_type.as_str() {
             "feat" => return "features",
             "fix" | "bug"  => return "bug_fixes",
-            "ci" | "build" | "chore" | "perf" | "refactor" | "style" | "test" => {
+            "ci" | "infra" | "build" | "chore" | "perf" | "refactor" | "style" | "test" => {
                 return "infrastructure"
             }
             "docs" => return "docs",
@@ -664,9 +664,15 @@ mod tests {
     }
 
     #[test]
-    fn test_find_commit_category() {
+    fn test_find_commit_category_bug_fixes() {
         let _result = find_commit_category("See merge request endpoint/project_name!1 ec42387abc\n- Merge branch 'feat' into 'main'\n\nBUG: format the message\n\nmore info");
         assert!(matches!("bug_fixes", _result));
+    }
+
+    #[test]
+    fn test_find_commit_category_infra() {
+        let _result = find_commit_category("See merge request endpoint/project_name!1 ec42387abc\n- Merge branch 'feat' into 'main'\n\nINFRA: format the message\n\nmore info");
+        assert!(matches!("infrastructure", _result));
     }
 
     #[test]
