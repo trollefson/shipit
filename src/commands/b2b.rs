@@ -6,7 +6,12 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::context::Context;
 use crate::error::ShipItError;
-use crate::common::{categorize_commits, format_categorized_commits, lookup_github_identifier, lookup_gitlab_project_id, open_merge_request, Github, Gitlab, summarize_with_agent, OllamaAgent};
+use crate::common::{
+    categorize_commits, extract_repo_path, fetch_github_pr_info, fetch_gitlab_mr_info,
+    format_categorized_commits, lookup_github_identifier, lookup_gitlab_project_id,
+    open_merge_request, parse_github_pr_number, parse_gitlab_mr_iid, Github, Gitlab,
+    summarize_with_agent, OllamaAgent,
+};
 
 pub async fn branch_to_branch(
     ctx: &Context,
@@ -17,6 +22,7 @@ pub async fn branch_to_branch(
     args_remote: String,
     args_prompt: Option<String>,
     args_description: Option<String>,
+    args_only_merges: bool,
 ) -> Result<(), ShipItError> {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
@@ -71,6 +77,17 @@ pub async fn branch_to_branch(
             commits.push(oid.map_err(|e| ShipItError::Git(e))?);
         }
 
+        // optionally filter to only merge commits (parent_count > 1)
+        let commits: Vec<_> = if args_only_merges {
+            commits.into_iter().filter(|oid| {
+                repo.find_commit(*oid)
+                    .map(|c| c.parent_count() > 1)
+                    .unwrap_or(false)
+            }).collect()
+        } else {
+            commits
+        };
+
         // display the messages of the discovered commits
         let mut messages = Vec::new();
         for commit in commits {
@@ -81,6 +98,81 @@ pub async fn branch_to_branch(
                 .to_string();
             messages.push(format!("{} {}", msg, release_oid.id().to_string()));
         }
+
+        // Enrich messages: replace merge commit messages with "[PR/MR Title (#N)](url)"
+        // using the GitHub / GitLab API.  This is best-effort — any failure (no remote,
+        // missing token, unrecognised message format, network error) falls back to the
+        // original raw message so the rest of the flow is unaffected.
+        let messages: Vec<String> = {
+            let enrichment_remote_url: Option<String> = {
+                repo.find_remote(&args_remote)
+                    .ok()
+                    .and_then(|r| r.url().map(|u| u.to_string()))
+            };
+
+            if let Some(ref remote_url) = enrichment_remote_url {
+                let is_github = remote_url.contains("github");
+                let is_gitlab = remote_url.contains("gitlab");
+                let repo_path = extract_repo_path(remote_url);
+
+                let mut enriched = Vec::with_capacity(messages.len());
+                for msg in messages {
+                    let replacement = 'enrich: {
+                        if is_github {
+                            if let Some(pr_num) = parse_github_pr_number(&msg) {
+                                if let (Some(token), Some(path)) =
+                                    (ctx.settings.github.token.as_deref(), &repo_path)
+                                {
+                                    let parts: Vec<&str> = path.splitn(2, '/').collect();
+                                    if parts.len() == 2 {
+                                        if let Ok((title, link)) = fetch_github_pr_info(
+                                            &ctx.settings.github.domain,
+                                            token,
+                                            parts[0],
+                                            parts[1],
+                                            pr_num,
+                                        )
+                                        .await
+                                        {
+                                            break 'enrich format!(
+                                                "[{} (#{})]({})",
+                                                title, pr_num, link
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        } else if is_gitlab {
+                            if let Some(mr_iid) = parse_gitlab_mr_iid(&msg) {
+                                if let (Some(token), Some(path)) =
+                                    (ctx.settings.gitlab.token.as_deref(), &repo_path)
+                                {
+                                    if let Ok((title, link)) = fetch_gitlab_mr_info(
+                                        &ctx.settings.gitlab.domain,
+                                        token,
+                                        path,
+                                        mr_iid,
+                                    )
+                                    .await
+                                    {
+                                        break 'enrich format!(
+                                            "[{} (!{})]({})",
+                                            title, mr_iid, link
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        msg
+                    };
+                    enriched.push(replacement);
+                }
+                enriched
+            } else {
+                messages
+            }
+        };
+
         let description = messages.join(",");
 
         if description.is_empty() {
@@ -340,6 +432,7 @@ mod tests {
             "origin".to_string(),
             None,
             None,
+            false,
         )
         .await;
 
@@ -369,6 +462,7 @@ mod tests {
             "origin".to_string(),
             None,
             None, // no description → code must look up the target branch
+            false,
         )
         .await;
 
@@ -398,6 +492,7 @@ mod tests {
             "origin".to_string(),
             None,
             Some("My custom description".to_string()),
+            false,
         )
         .await;
 
@@ -428,6 +523,7 @@ mod tests {
             "origin".to_string(),
             None,
             None,
+            false,
         )
         .await;
 
@@ -448,6 +544,7 @@ mod tests {
             "origin".to_string(),
             None,
             None,
+            false,
         )
         .await;
 
@@ -468,6 +565,7 @@ mod tests {
             "origin".to_string(),
             None,
             Some("Provided description".to_string()),
+            false,
         )
         .await;
 
@@ -488,6 +586,7 @@ mod tests {
             "origin".to_string(),
             None,
             None,
+            false,
         )
         .await;
 
@@ -508,6 +607,7 @@ mod tests {
             "origin".to_string(),
             None,
             None,
+            false,
         )
         .await;
 
@@ -528,6 +628,7 @@ mod tests {
             "origin".to_string(),
             None,
             Some("desc".to_string()),
+            false,
         )
         .await;
 
@@ -550,6 +651,7 @@ mod tests {
             "origin".to_string(),
             None,
             Some("desc".to_string()),
+            false,
         )
         .await;
 
@@ -572,6 +674,7 @@ mod tests {
             "origin".to_string(),
             None,
             Some("desc".to_string()),
+            false,
         )
         .await;
 
@@ -595,6 +698,7 @@ mod tests {
             "origin".to_string(),
             None,
             Some("desc".to_string()),
+            false,
         )
         .await;
 
@@ -618,9 +722,87 @@ mod tests {
             "origin".to_string(),
             None,
             Some("desc".to_string()),
+            false,
         )
         .await;
 
         assert!(matches!(result, Err(ShipItError::Error(msg)) if msg.contains("numeric")));
+    }
+
+    #[tokio::test]
+    async fn test_only_merges_filters_out_regular_commits() {
+        // The diverged repo has one regular (non-merge) commit on the source branch.
+        // With only_merges=true that commit is filtered out, so the description is
+        // empty and the function returns Ok early.
+        let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
+
+        let ctx = make_ctx(false, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            "origin".to_string(),
+            None,
+            None,
+            true,
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_only_merges_includes_merge_commits() {
+        // Build a repo where the source branch has a real merge commit (two parents).
+        let dir = TempDir::new().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+
+        // base commit → shared ancestor
+        let base_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "base commit", &tree, &[])
+            .unwrap();
+        let base_commit = repo.find_commit(base_oid).unwrap();
+
+        // target branch sits at the base
+        repo.branch("target", &base_commit, false).unwrap();
+
+        // feature commit branching off base
+        let feature_oid = repo
+            .commit(None, &sig, &sig, "feat: feature", &tree, &[&base_commit])
+            .unwrap();
+        let feature_commit = repo.find_commit(feature_oid).unwrap();
+
+        // merge commit on source that joins base + feature (two parents)
+        let source_ref = "refs/heads/source";
+        repo.commit(
+            Some(source_ref),
+            &sig,
+            &sig,
+            "Merge branch 'feature' into source",
+            &tree,
+            &[&base_commit, &feature_commit],
+        )
+        .unwrap();
+
+        let ctx = make_ctx(true, false, "ollama", None, None);
+        let result = branch_to_branch(
+            &ctx,
+            "source".to_string(),
+            "target".to_string(),
+            Some(dir.path().to_str().unwrap().to_string()),
+            None,
+            "origin".to_string(),
+            None,
+            None,
+            true,
+        )
+        .await;
+
+        assert!(result.is_ok());
     }
 }

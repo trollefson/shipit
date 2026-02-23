@@ -208,6 +208,130 @@ pub(crate) async fn open_merge_request<P: GitPlatform>(
 }
 
 
+/// Tries to parse a GitHub PR number from a merge commit message.
+///
+/// Recognizes:
+/// - `"Merge pull request #123 from owner/branch"` (standard GitHub merge commit)
+/// - `"feat: something (#123)"` (squash-merge title)
+pub(crate) fn parse_github_pr_number(message: &str) -> Option<u64> {
+    // Standard merge commit: "Merge pull request #NNN"
+    if let Some(idx) = message.find("pull request #") {
+        let rest = &message[idx + "pull request #".len()..];
+        let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !num_str.is_empty() {
+            return num_str.parse().ok();
+        }
+    }
+    // Squash-merge title: "(#NNN)"
+    if let Some(idx) = message.find("(#") {
+        let rest = &message[idx + 2..];
+        let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !num_str.is_empty() {
+            if rest.chars().nth(num_str.len()) == Some(')') {
+                return num_str.parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// Tries to parse a GitLab MR IID from a merge commit message.
+///
+/// Recognizes `"See merge request group/project!123"` which GitLab appends to
+/// the body of every merge commit.
+pub(crate) fn parse_gitlab_mr_iid(message: &str) -> Option<u64> {
+    if let Some(idx) = message.find("See merge request ") {
+        let rest = &message[idx + "See merge request ".len()..];
+        if let Some(bang_idx) = rest.find('!') {
+            let after_bang = &rest[bang_idx + 1..];
+            let num_str: String = after_bang
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if !num_str.is_empty() {
+                return num_str.parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// Fetches the title and HTML URL of a GitHub pull request.
+///
+/// Builds an Octocrab client from the supplied credentials, then calls
+/// `GET /repos/{owner}/{repo}/pulls/{number}`.
+pub(crate) async fn fetch_github_pr_info(
+    domain: &str,
+    token: &str,
+    owner: &str,
+    repo_name: &str,
+    number: u64,
+) -> Result<(String, String), ShipItError> {
+    let mut builder = OctocrabBuilder::new().personal_token(token.to_string());
+    if domain != "github.com" {
+        let base_uri = format!("https://{}/api/v3/", domain);
+        builder = builder
+            .base_uri(base_uri)
+            .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
+    }
+    let octo = builder.build().map_err(|e| ShipItError::Github(e))?;
+
+    let pr = octo
+        .pulls(owner, repo_name)
+        .get(number)
+        .await
+        .map_err(|e| ShipItError::Github(e))?;
+
+    let title = pr
+        .title
+        .ok_or_else(|| ShipItError::Error("PR missing title".to_string()))?;
+    let url = pr
+        .html_url
+        .ok_or_else(|| ShipItError::Error("PR missing url".to_string()))?;
+
+    Ok((title, url.to_string()))
+}
+
+/// Fetches the title and web URL of a GitLab merge request by IID.
+///
+/// Builds a GitLab async client from the supplied credentials, then calls
+/// `GET /projects/{project}/merge_requests/{iid}`.
+pub(crate) async fn fetch_gitlab_mr_info(
+    domain: &str,
+    token: &str,
+    project_path: &str,
+    iid: u64,
+) -> Result<(String, String), ShipItError> {
+    use gitlab::api::projects::merge_requests::MergeRequest;
+
+    let client = GitlabClient::builder(domain, token)
+        .build_async()
+        .await
+        .map_err(|e| ShipItError::Gitlab(e))?;
+
+    let endpoint = MergeRequest::builder()
+        .project(project_path)
+        .merge_request(iid)
+        .build()
+        .map_err(|_| ShipItError::Error("Failed to build GitLab MR query".to_string()))?;
+
+    let mr: serde_json::Value = endpoint
+        .query_async(&client)
+        .await
+        .map_err(|e| ShipItError::Error(format!("Failed to fetch GitLab MR: {}", e)))?;
+
+    let title = mr["title"]
+        .as_str()
+        .ok_or_else(|| ShipItError::Error("GitLab MR missing title".to_string()))?
+        .to_string();
+    let url = mr["web_url"]
+        .as_str()
+        .ok_or_else(|| ShipItError::Error("GitLab MR missing url".to_string()))?
+        .to_string();
+
+    Ok((title, url))
+}
+
 /// Formats a map of categorized commits into a markdown string.
 /// Each key becomes a `##` subheading with its commits listed as bullet points.
 /// Keys are sorted alphabetically and empty categories are omitted.
@@ -281,6 +405,70 @@ mod tests {
     use crate::settings::{OllamaOptions, OllamaSettings};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ── parse_github_pr_number ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_github_pr_number_standard_merge_commit() {
+        assert_eq!(
+            parse_github_pr_number("Merge pull request #123 from owner/feature-branch"),
+            Some(123)
+        );
+    }
+
+    #[test]
+    fn test_parse_github_pr_number_squash_merge_title() {
+        assert_eq!(
+            parse_github_pr_number("feat: add new feature (#456)"),
+            Some(456)
+        );
+    }
+
+    #[test]
+    fn test_parse_github_pr_number_no_match() {
+        assert_eq!(
+            parse_github_pr_number("Merge branch 'main' into feature"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_parse_github_pr_number_squash_no_closing_paren() {
+        // "(#123" without a closing paren should not match
+        assert_eq!(parse_github_pr_number("fix: something (#123 without paren"), None);
+    }
+
+    // ── parse_gitlab_mr_iid ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_gitlab_mr_iid_standard_body() {
+        assert_eq!(
+            parse_gitlab_mr_iid(
+                "Merge branch 'feature' into 'main'\n\nSee merge request group/project!789"
+            ),
+            Some(789)
+        );
+    }
+
+    #[test]
+    fn test_parse_gitlab_mr_iid_no_match() {
+        assert_eq!(
+            parse_gitlab_mr_iid("Merge branch 'feature' into 'main'"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_parse_gitlab_mr_iid_multiline_body() {
+        assert_eq!(
+            parse_gitlab_mr_iid(
+                "Merge branch 'feat/thing' into 'main'\n\nAdds the thing.\n\nSee merge request myorg/myrepo!42"
+            ),
+            Some(42)
+        );
+    }
+
+    // ── extract_repo_path ─────────────────────────────────────────────────────
 
     #[test]
     fn test_extract_repo_path_ssh_url() {

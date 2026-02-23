@@ -51,6 +51,11 @@ pub enum Commands {
             help = "Description to use for the merge/pull request (skips commit discovery and ai summary)"
         )]
         description: Option<String>,
+        #[arg(
+            long,
+            help = "Only include merge commits in the discovered commits"
+        )]
+        only_merges: bool,
     },
     /// Manage shipit configuration
     Config {
