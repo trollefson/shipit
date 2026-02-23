@@ -13,17 +13,7 @@ use crate::common::{
     summarize_with_agent, OllamaAgent,
 };
 
-pub async fn branch_to_branch(
-    ctx: &Context,
-    args_source: String,
-    args_target: String,
-    args_dir: Option<String>,
-    args_id: Option<String>,
-    args_remote: String,
-    args_prompt: Option<String>,
-    args_description: Option<String>,
-    args_only_merges: bool,
-) -> Result<(), ShipItError> {
+fn open_repo(args_dir: Option<String>) -> Repository {
     let dir = match args_dir {
         Some(path) => std::path::PathBuf::from(path),
         None => match env::current_dir() {
@@ -39,259 +29,254 @@ pub async fn branch_to_branch(
         "Found a git repository at {}",
         repo.path().to_str().unwrap_or("NOT FOUND")
     );
+    repo
+}
 
-    // get branch and most recent commit structs for the target and source branches
-    let source = repo.find_branch(&args_source, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
+fn collect_commits(
+    repo: &Repository,
+    source: &git2::Branch<'_>,
+    args_target: &str,
+    only_merges: bool,
+) -> Result<Vec<git2::Oid>, ShipItError> {
+    let target = repo.find_branch(args_target, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
+    let target_oid = target
+        .get()
+        .target()
+        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the target branch!")))?;
 
-    // if a description is provided, skip commit discovery and summary generation
-    let mut summary = if let Some(provided) = args_description {
-        provided
+    let target_oid_on_source = repo.find_commit(target_oid).unwrap();
+
+    let mut revwalk = repo.revwalk().map_err(|e| ShipItError::Git(e))?;
+    let root_ref = "refs/heads/";
+    let branch_ref = source
+        .name().map_err(|e| ShipItError::Git(e))?
+        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the name of the source branch!")))?;
+    let full_ref = root_ref.to_string() + branch_ref;
+    revwalk.push_ref(&full_ref).map_err(|e| ShipItError::Git(e))?;
+
+    let target_oid_hash = target_oid_on_source.id();
+    revwalk.hide(target_oid_hash).map_err(|e| ShipItError::Git(e))?;
+
+    let mut commits = Vec::new();
+    for oid in revwalk {
+        commits.push(oid.map_err(|e| ShipItError::Git(e))?);
+    }
+
+    let commits: Vec<_> = if only_merges {
+        commits.into_iter().filter(|oid| {
+            repo.find_commit(*oid)
+                .map(|c| c.parent_count() > 1)
+                .unwrap_or(false)
+        }).collect()
     } else {
-        let target = repo.find_branch(&args_target, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
-        let target_oid = target
-            .get()
-            .target()
-            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the target branch!")))?;
+        commits
+    };
 
-        // find the most recent target commit on the source branch
-        // this will help determine which commits are not present on the target branch
-        let target_oid_on_source = repo.find_commit(target_oid).unwrap();
+    Ok(commits)
+}
 
-        // create a vector of the commit ids that are on the source, but not the
-        // target branch.  display the messages for those commit ids
-        // and create a revision walk for the source branch
-        let mut revwalk = repo.revwalk().map_err(|e| ShipItError::Git(e))?;
-        let root_ref = "refs/heads/";
-        let branch_ref = source
-            .name().map_err(|e| ShipItError::Git(e))?
-            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the name of the source branch!")))?;
-        let full_ref = root_ref.to_string() + branch_ref;
-        revwalk.push_ref(&full_ref).map_err(|e| ShipItError::Git(e))?;
-        let target_oid_hash = target_oid_on_source.id();
+fn collect_messages(repo: &Repository, commits: Vec<git2::Oid>) -> Result<Vec<String>, ShipItError> {
+    let mut messages = Vec::new();
+    for commit in commits {
+        let release_oid = repo.find_commit(commit).unwrap();
+        let msg = release_oid
+            .message()
+            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the message of a release commit!")))?
+            .to_string();
+        messages.push(format!("{} {}", msg, release_oid.id().to_string()));
+    }
+    Ok(messages)
+}
 
-        // hide commits that are on both branches
-        // essentially tells the walker to stop here
-        revwalk.hide(target_oid_hash).map_err(|e| ShipItError::Git(e))?;
-        let mut commits = Vec::new();
-        for oid in revwalk {
-            commits.push(oid.map_err(|e| ShipItError::Git(e))?);
-        }
+async fn enrich_messages(
+    ctx: &Context,
+    repo: &Repository,
+    remote_name: &str,
+    messages: Vec<String>,
+) -> Vec<String> {
+    let enrichment_remote_url: Option<String> = {
+        repo.find_remote(remote_name)
+            .ok()
+            .and_then(|r| r.url().map(|u| u.to_string()))
+    };
 
-        // optionally filter to only merge commits (parent_count > 1)
-        let commits: Vec<_> = if args_only_merges {
-            commits.into_iter().filter(|oid| {
-                repo.find_commit(*oid)
-                    .map(|c| c.parent_count() > 1)
-                    .unwrap_or(false)
-            }).collect()
-        } else {
-            commits
-        };
+    if let Some(ref remote_url) = enrichment_remote_url {
+        let is_github = remote_url.contains("github");
+        let is_gitlab = remote_url.contains("gitlab");
+        let repo_path = extract_repo_path(remote_url);
 
-        // display the messages of the discovered commits
-        let mut messages = Vec::new();
-        for commit in commits {
-            let release_oid = repo.find_commit(commit).unwrap();
-            let msg = release_oid
-                .message()
-                .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the message of a release commit!")))?
-                .to_string();
-            messages.push(format!("{} {}", msg, release_oid.id().to_string()));
-        }
-
-        // Enrich messages: replace merge commit messages with "[PR/MR Title (#N)](url)"
-        // using the GitHub / GitLab API.  This is best-effort — any failure (no remote,
-        // missing token, unrecognised message format, network error) falls back to the
-        // original raw message so the rest of the flow is unaffected.
-        let messages: Vec<String> = {
-            let enrichment_remote_url: Option<String> = {
-                repo.find_remote(&args_remote)
-                    .ok()
-                    .and_then(|r| r.url().map(|u| u.to_string()))
-            };
-
-            if let Some(ref remote_url) = enrichment_remote_url {
-                let is_github = remote_url.contains("github");
-                let is_gitlab = remote_url.contains("gitlab");
-                let repo_path = extract_repo_path(remote_url);
-
-                let mut enriched = Vec::with_capacity(messages.len());
-                for msg in messages {
-                    let replacement = 'enrich: {
-                        if is_github {
-                            if let Some(pr_num) = parse_github_pr_number(&msg) {
-                                if let (Some(token), Some(path)) =
-                                    (ctx.settings.github.token.as_deref(), &repo_path)
+        let mut enriched = Vec::with_capacity(messages.len());
+        for msg in messages {
+            let replacement = 'enrich: {
+                if is_github {
+                    if let Some(pr_num) = parse_github_pr_number(&msg) {
+                        if let (Some(token), Some(path)) =
+                            (ctx.settings.github.token.as_deref(), &repo_path)
+                        {
+                            let parts: Vec<&str> = path.splitn(2, '/').collect();
+                            if parts.len() == 2 {
+                                if let Ok((title, link)) = fetch_github_pr_info(
+                                    &ctx.settings.github.domain,
+                                    token,
+                                    parts[0],
+                                    parts[1],
+                                    pr_num,
+                                )
+                                .await
                                 {
-                                    let parts: Vec<&str> = path.splitn(2, '/').collect();
-                                    if parts.len() == 2 {
-                                        if let Ok((title, link)) = fetch_github_pr_info(
-                                            &ctx.settings.github.domain,
-                                            token,
-                                            parts[0],
-                                            parts[1],
-                                            pr_num,
-                                        )
-                                        .await
-                                        {
-                                            break 'enrich format!(
-                                                "{} - [#{}]({})",
-                                                title, pr_num, link
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        } else if is_gitlab {
-                            if let Some(mr_iid) = parse_gitlab_mr_iid(&msg) {
-                                if let (Some(token), Some(path)) =
-                                    (ctx.settings.gitlab.token.as_deref(), &repo_path)
-                                {
-                                    if let Ok((title, link)) = fetch_gitlab_mr_info(
-                                        &ctx.settings.gitlab.domain,
-                                        token,
-                                        path,
-                                        mr_iid,
-                                    )
-                                    .await
-                                    {
-                                        break 'enrich format!(
-                                            "{} - [!{}]({})",
-                                            title, mr_iid, link
-                                        );
-                                    }
+                                    break 'enrich format!(
+                                        "{} - [#{}]({})",
+                                        title, pr_num, link
+                                    );
                                 }
                             }
                         }
-                        msg
-                    };
-                    enriched.push(replacement);
-                }
-                enriched
-            } else {
-                messages
-            }
-        };
-
-        let description = messages.join(",");
-
-        if description.is_empty() {
-            println!("No commits found between '{}' and '{}'. Nothing to do.", args_source, args_target);
-            return Ok(());
-        }
-
-        // ask a local llm to summarize these commit messages
-        if !ctx.settings.shipit.agent.is_empty() {
-            let spinner = ProgressBar::new_spinner();
-            spinner.set_style(
-                ProgressStyle::default_spinner()
-                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-                    .template("{spinner:.cyan} {msg}")
-                    .unwrap(),
-            );
-
-            match ctx.settings.shipit.agent.as_str() {
-                "ollama" => {
-                    let mut ollama = ctx.settings.ollama.clone();
-                    if let Some(prompt) = args_prompt {
-                        ollama.prompt = prompt;
                     }
-                    spinner.set_message(format!("Generating merge request description with {}...", ollama.model));
-                    spinner.enable_steady_tick(Duration::from_millis(80));
-
-                    let agent = OllamaAgent::new(ollama);
-                    let result = summarize_with_agent(&description, &agent)
-                        .await
-                        .map_err(|_e| ShipItError::Error("Failed to summarize with agent!".to_string()));
-
-                    spinner.finish_and_clear();
-
-                    let result = result?;
-                    result
+                } else if is_gitlab {
+                    if let Some(mr_iid) = parse_gitlab_mr_iid(&msg) {
+                        if let (Some(token), Some(path)) =
+                            (ctx.settings.gitlab.token.as_deref(), &repo_path)
+                        {
+                            if let Ok((title, link)) = fetch_gitlab_mr_info(
+                                &ctx.settings.gitlab.domain,
+                                token,
+                                path,
+                                mr_iid,
+                            )
+                            .await
+                            {
+                                break 'enrich format!(
+                                    "{} - [!{}]({})",
+                                    title, mr_iid, link
+                                );
+                            }
+                        }
+                    }
                 }
-                "shipit" => {
-                    let refs: Vec<&str> = messages.iter().map(|s| s.as_str()).collect();
-                    let categorized = categorize_commits(&refs);
-                    let formatted = format_categorized_commits(&categorized);
-                    formatted
-                }
-                unknown => {
-                    return Err(ShipItError::Error(format!("Unknown ai agent: '{}'", unknown)));
-                }
-            }
-        } else {
-            description
+                msg
+            };
+            enriched.push(replacement);
         }
-    };
-
-    println!("The merge request description is:\n\n{}", summary);
-    summary += "\n\n\n*This request was generated by [Shipit](https://gitshipit.net)* 🚢";
-
-    if ctx.settings.shipit.dryrun {
-        println!("\n\nDry run complete! Re-run without the dry-run flag to open a request.");
-        return Ok(());
+        enriched
+    } else {
+        messages
     }
+}
 
-    // always fetch the remote url — needed both for platform detection and id auto-lookup
-    let remote_url = {
-        let remote = repo.find_remote(&args_remote).map_err(|e| ShipItError::Git(e))?;
-        remote.url()
-            .ok_or_else(|| ShipItError::Error(format!("The '{}' remote has no url.", args_remote)))?
-            .to_string()
-    };
+async fn generate_summary(
+    ctx: &Context,
+    description: &str,
+    messages: &[String],
+    args_prompt: Option<String>,
+) -> Result<String, ShipItError> {
+    if !ctx.settings.shipit.agent.is_empty() {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{spinner:.cyan} {msg}")
+                .unwrap(),
+        );
 
-    // detect platform from remote url
-    let (is_github, is_gitlab) = (remote_url.contains("github"), remote_url.contains("gitlab"));
+        match ctx.settings.shipit.agent.as_str() {
+            "ollama" => {
+                let mut ollama = ctx.settings.ollama.clone();
+                if let Some(prompt) = args_prompt {
+                    ollama.prompt = prompt;
+                }
+                spinner.set_message(format!("Generating merge request description with {}...", ollama.model));
+                spinner.enable_steady_tick(Duration::from_millis(80));
 
-    // resolve the project identifier:
-    // use --id if provided, otherwise look it up from the remote url via the platform api
-    let resolved_id: String = match args_id {
-        Some(id) => id,
+                let agent = OllamaAgent::new(ollama);
+                let result = summarize_with_agent(description, &agent)
+                    .await
+                    .map_err(|_e| ShipItError::Error("Failed to summarize with agent!".to_string()));
+
+                spinner.finish_and_clear();
+
+                Ok(result?)
+            }
+            "shipit" => {
+                let refs: Vec<&str> = messages.iter().map(|s| s.as_str()).collect();
+                let categorized = categorize_commits(&refs);
+                let formatted = format_categorized_commits(&categorized);
+                Ok(formatted)
+            }
+            unknown => {
+                Err(ShipItError::Error(format!("Unknown ai agent: '{}'", unknown)))
+            }
+        }
+    } else {
+        Ok(description.to_string())
+    }
+}
+
+fn resolve_remote_url(repo: &Repository, remote_name: &str) -> Result<String, ShipItError> {
+    let remote = repo.find_remote(remote_name).map_err(|e| ShipItError::Git(e))?;
+    Ok(remote.url()
+        .ok_or_else(|| ShipItError::Error(format!("The '{}' remote has no url.", remote_name)))?
+        .to_string())
+}
+
+async fn resolve_project_id(
+    ctx: &Context,
+    remote_url: &str,
+    args_id: Option<String>,
+    is_github: bool,
+    is_gitlab: bool,
+) -> Result<String, ShipItError> {
+    match args_id {
+        Some(id) => Ok(id),
         None => {
             if is_github {
-                lookup_github_identifier(&remote_url)
-                    .map_err(|e| ShipItError::Error(format!("Failed to detect GitHub owner/repo from remote url: {}", e)))?
+                lookup_github_identifier(remote_url)
+                    .map_err(|e| ShipItError::Error(format!("Failed to detect GitHub owner/repo from remote url: {}", e)))
             } else if is_gitlab {
                 let token = ctx.settings.gitlab.token.as_deref()
                     .ok_or_else(|| ShipItError::Error("GitLab token is required to look up the project id.".to_string()))?;
-                let id = lookup_gitlab_project_id(&remote_url, &ctx.settings.gitlab.domain, token).await
+                let id = lookup_gitlab_project_id(remote_url, &ctx.settings.gitlab.domain, token).await
                     .map_err(|e| ShipItError::Error(format!("Failed to look up GitLab project id from remote url: {}", e)))?;
                 println!("Auto-detected GitLab project id: {}", id);
-                id.to_string()
+                Ok(id.to_string())
             } else {
-                return Err(ShipItError::Error("Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string()));
+                Err(ShipItError::Error("Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string()))
             }
         }
-    };
-
-    // check if the local source branch is ahead of its remote tracking branch
-    let needs_push = {
-        let local_oid = source.get().target()
-            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to get source branch oid")))?;
-        let remote_tracking_ref = format!("refs/remotes/{}/{}", args_remote, args_source);
-        match repo.find_reference(&remote_tracking_ref) {
-            Ok(remote_ref) => match remote_ref.target() {
-                Some(remote_oid) => {
-                    let (ahead, _) = repo.graph_ahead_behind(local_oid, remote_oid)
-                        .map_err(|e| ShipItError::Git(e))?;
-                    ahead > 0
-                }
-                None => true,
-            },
-            Err(_) => true,
-        }
-    };
-
-    if needs_push {
-        println!(
-            "\n\nYour local source branch is ahead of the remote. Please push it, then press Enter to continue:\n\n  git push {} {}\n",
-            args_remote, args_source
-        );
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input).map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
     }
+}
 
-    let url = if is_github {
+fn check_needs_push(
+    repo: &Repository,
+    source: &git2::Branch<'_>,
+    remote_name: &str,
+    source_branch: &str,
+) -> Result<bool, ShipItError> {
+    let local_oid = source.get().target()
+        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to get source branch oid")))?;
+    let remote_tracking_ref = format!("refs/remotes/{}/{}", remote_name, source_branch);
+    match repo.find_reference(&remote_tracking_ref) {
+        Ok(remote_ref) => match remote_ref.target() {
+            Some(remote_oid) => {
+                let (ahead, _) = repo.graph_ahead_behind(local_oid, remote_oid)
+                    .map_err(|e| ShipItError::Git(e))?;
+                Ok(ahead > 0)
+            }
+            None => Ok(true),
+        },
+        Err(_) => Ok(true),
+    }
+}
+
+async fn open_platform_mr(
+    ctx: &Context,
+    resolved_id: &str,
+    source: &str,
+    target: &str,
+    summary: &str,
+    is_github: bool,
+    is_gitlab: bool,
+) -> Result<String, ShipItError> {
+    if is_github {
         let parts: Vec<&str> = resolved_id.splitn(2, '/').collect();
         if parts.len() != 2 {
             return Err(ShipItError::Error(format!("GitHub project identifier '{}' must be in 'owner/repo' format.", resolved_id)));
@@ -303,9 +288,9 @@ pub async fn branch_to_branch(
             owner: owner.to_string(),
             repo: gh_repo.to_string(),
         };
-        open_merge_request(&platform, &args_source, &args_target, &summary)
+        open_merge_request(&platform, source, target, summary)
             .await
-            .map_err(|e| ShipItError::Error(format!("Failed to open a GitHub pr: {}", e)))?
+            .map_err(|e| ShipItError::Error(format!("Failed to open a GitHub pr: {}", e)))
     } else if is_gitlab {
         let project_id: u64 = resolved_id.parse()
             .map_err(|_| ShipItError::Error(format!("GitLab project identifier '{}' must be a numeric project id.", resolved_id)))?;
@@ -314,12 +299,67 @@ pub async fn branch_to_branch(
             token: ctx.settings.gitlab.token.as_deref().unwrap().to_string(),
             project_id,
         };
-        open_merge_request(&platform, &args_source, &args_target, &summary)
+        open_merge_request(&platform, source, target, summary)
             .await
-            .map_err(|e| ShipItError::Error(format!("Failed to open a GitLab mr: {}", e)))?
+            .map_err(|e| ShipItError::Error(format!("Failed to open a GitLab mr: {}", e)))
     } else {
-        return Err(ShipItError::Error("Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string()));
+        Err(ShipItError::Error("Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string()))
+    }
+}
+
+pub async fn branch_to_branch(
+    ctx: &Context,
+    args_source: String,
+    args_target: String,
+    args_dir: Option<String>,
+    args_id: Option<String>,
+    args_remote: String,
+    args_prompt: Option<String>,
+    args_description: Option<String>,
+    args_only_merges: bool,
+) -> Result<(), ShipItError> {
+    let repo = open_repo(args_dir);
+    let source = repo.find_branch(&args_source, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
+
+    let mut summary = if let Some(provided) = args_description {
+        provided
+    } else {
+        let commits = collect_commits(&repo, &source, &args_target, args_only_merges)?;
+        let messages = collect_messages(&repo, commits)?;
+        let messages = enrich_messages(ctx, &repo, &args_remote, messages).await;
+
+        let description = messages.join(",");
+
+        if description.is_empty() {
+            println!("No commits found between '{}' and '{}'. Nothing to do.", args_source, args_target);
+            return Ok(());
+        }
+
+        generate_summary(ctx, &description, &messages, args_prompt).await?
     };
+
+    println!("The merge request description is:\n\n{}", summary);
+    summary += "\n\n\n*This request was generated by [Shipit](https://gitshipit.net)* 🚢";
+
+    if ctx.settings.shipit.dryrun {
+        println!("\n\nDry run complete! Re-run without the dry-run flag to open a request.");
+        return Ok(());
+    }
+
+    let remote_url = resolve_remote_url(&repo, &args_remote)?;
+    let (is_github, is_gitlab) = (remote_url.contains("github"), remote_url.contains("gitlab"));
+    let resolved_id = resolve_project_id(ctx, &remote_url, args_id, is_github, is_gitlab).await?;
+
+    if check_needs_push(&repo, &source, &args_remote, &args_source)? {
+        println!(
+            "\n\nYour local source branch is ahead of the remote. Please push it, then press Enter to continue:\n\n  git push {} {}\n",
+            args_remote, args_source
+        );
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    }
+
+    let url = open_platform_mr(ctx, &resolved_id, &args_source, &args_target, &summary, is_github, is_gitlab).await?;
     println!("\n\nThe request is available at:\n\n{}", url);
 
     Ok(())
