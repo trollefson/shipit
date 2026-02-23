@@ -10,17 +10,18 @@ pub(crate) trait Agent {
 
 pub(crate) struct OllamaAgent {
     settings: OllamaSettings,
+    client: Client,
 }
 
 impl OllamaAgent {
     pub(crate) fn new(settings: OllamaSettings) -> Self {
-        Self { settings }
+        Self { settings, client: Client::new() }
     }
 }
 
 impl Agent for OllamaAgent {
     async fn send_prompt(&self, text: &str) -> Result<String, ShipItError> {
-        let client = Client::new();
+        let client = &self.client;
 
         let prompt = format!("{}\n\n{}", self.settings.prompt, text);
         let url = format!(
@@ -56,6 +57,13 @@ pub(crate) async fn summarize_with_agent<A: Agent>(
     agent: &A,
 ) -> Result<String, ShipItError> {
     agent.send_prompt(text).await
+}
+
+#[cfg(test)]
+impl OllamaAgent {
+    fn new_with_client(settings: OllamaSettings, client: Client) -> Self {
+        Self { settings, client }
+    }
 }
 
 #[cfg(test)]
@@ -123,11 +131,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_ollama_agent_returns_http_error_on_connection_failure() {
-        let closed_port = {
-            let server = MockServer::start().await;
-            server.address().port()
-        };
-        let agent = OllamaAgent::new(ollama_settings(closed_port));
+        // Bind a listener that accepts TCP connections but never sends an HTTP
+        // response. This avoids any race condition from dropping a port and
+        // hoping nothing else claims it before the request fires.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap();
+
+        let agent = OllamaAgent::new_with_client(ollama_settings(port), client);
         let result = summarize_with_agent("text", &agent).await;
         assert!(matches!(result, Err(ShipItError::Http(_))));
     }
