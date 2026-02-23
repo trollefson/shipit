@@ -367,10 +367,39 @@ pub(crate) fn format_categorized_commits(commits: &HashMap<String, Vec<String>>)
     sections.join("\n")
 }
 
+/// Scans every whitespace-separated token in `text` for the first recognised
+/// conventional-commit type and returns the corresponding category key.
+///
+/// A leading `[` is stripped from each token before matching so that enriched
+/// merge-commit messages of the form `[feat: add something (#123)](url)` are
+/// handled correctly.  Multiline messages are also supported because
+/// `split_whitespace` spans newlines.
+fn find_commit_category(text: &str) -> &'static str {
+    for token in text.split_whitespace() {
+        let token = token.trim_start_matches('[');
+        let commit_type = token.split(['(', ':']).next().unwrap_or("").trim();
+        match commit_type {
+            "feat" => return "features",
+            "fix" => return "bug_fixes",
+            "ci" | "build" | "chore" | "perf" | "refactor" | "style" | "test" => {
+                return "infrastructure"
+            }
+            "docs" => return "docs",
+            _ => {}
+        }
+    }
+    "misc"
+}
+
 /// Categorizes conventional commits into features, bug fixes, infrastructure, docs, and misc.
 ///
 /// The key for each category in the returned map is one of:
 /// `"features"`, `"bug_fixes"`, `"infrastructure"`, `"docs"`, `"misc"`.
+///
+/// The conventional-commit type is searched across the **entire** message, not
+/// just its first token, so enriched merge-commit messages (e.g.
+/// `[feat: add something (#123)](url)`) and multiline messages are handled
+/// correctly.
 pub(crate) fn categorize_commits(commits: &[&str]) -> HashMap<String, Vec<String>> {
     let mut map: HashMap<String, Vec<String>> = [
         "features",
@@ -384,14 +413,7 @@ pub(crate) fn categorize_commits(commits: &[&str]) -> HashMap<String, Vec<String
     .collect();
 
     for &commit in commits {
-        let commit_type = commit.split(['(', ':']).next().unwrap_or("").trim();
-        let category = match commit_type {
-            "feat" => "features",
-            "fix" => "bug_fixes",
-            "ci" | "build" | "chore" | "perf" | "refactor" | "style" | "test" => "infrastructure",
-            "docs" => "docs",
-            _ => "misc",
-        };
+        let category = find_commit_category(commit);
         map.entry(category.to_string()).or_default().push(commit.to_string());
     }
 
@@ -718,6 +740,64 @@ mod tests {
         assert_eq!(result["docs"], vec!["docs: update docs"]);
         assert_eq!(result["infrastructure"], vec!["ci: add workflow"]);
         assert_eq!(result["misc"], vec!["wip: in progress"]);
+    }
+
+    // ── categorize_commits – enriched / nested conventional-commit headings ──
+
+    #[test]
+    fn test_categorize_commits_enriched_github_feat() {
+        // Enriched GitHub merge-commit: "[Title (#N)](url)" where title starts with feat:
+        let commits = vec!["[feat: add login page (#42)](https://github.com/owner/repo/pull/42)"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["features"].len(), 1);
+        assert!(result["bug_fixes"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_enriched_github_fix() {
+        let commits = vec!["[fix: resolve null pointer (#7)](https://github.com/owner/repo/pull/7)"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["bug_fixes"].len(), 1);
+        assert!(result["features"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_enriched_gitlab_feat() {
+        // Enriched GitLab merge-commit: "[Title (!N)](url)"
+        let commits = vec!["[feat(api): expose new endpoint (!99)](https://gitlab.com/g/p/-/merge_requests/99)"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["features"].len(), 1);
+    }
+
+    #[test]
+    fn test_categorize_commits_enriched_ci_infrastructure() {
+        let commits = vec!["[ci: add release workflow (#5)](https://github.com/owner/repo/pull/5)"];
+        let result = categorize_commits(&commits);
+        assert_eq!(result["infrastructure"].len(), 1);
+    }
+
+    #[test]
+    fn test_categorize_commits_multiline_merge_commit_with_nested_type() {
+        // Multiline message: first line is the merge subject, conventional type appears later.
+        let msg = "Merge pull request #10 from owner/feature\n\nfeat: add something cool abc123";
+        let result = categorize_commits(&[msg]);
+        assert_eq!(result["features"].len(), 1);
+        assert!(result["misc"].is_empty());
+    }
+
+    #[test]
+    fn test_categorize_commits_multiline_fix_nested() {
+        let msg = "Merge pull request #11 from owner/bugfix\n\nfix(ui): correct button alignment abc123";
+        let result = categorize_commits(&[msg]);
+        assert_eq!(result["bug_fixes"].len(), 1);
+    }
+
+    #[test]
+    fn test_categorize_commits_no_conventional_type_falls_back_to_misc() {
+        let msg = "Merge branch 'main' into develop abc123";
+        let result = categorize_commits(&[msg]);
+        assert_eq!(result["misc"].len(), 1);
+        assert!(result["features"].is_empty());
     }
 
     #[test]
