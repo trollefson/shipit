@@ -27,6 +27,9 @@ async fn main() -> Result<(), ShipItError> {
         cli::Commands::B2b(args) => {
             commands::b2b::branch_to_branch(&ctx, args).await?;
         }
+        cli::Commands::B2t(args) => {
+            commands::b2t::branch_to_tag(&ctx, args).await?;
+        }
         cli::Commands::Config { .. } => unreachable!(),
     }
     Ok(())

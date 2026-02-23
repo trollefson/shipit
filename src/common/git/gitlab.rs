@@ -39,6 +39,41 @@ impl GitPlatform for Gitlab {
     }
 }
 
+/// Creates an annotated GitLab tag for the given tag name on the given branch/ref.
+pub(crate) async fn create_gitlab_tag(
+    domain: &str,
+    token: &str,
+    project_id: u64,
+    tag_name: &str,
+    branch: &str,
+    notes: &str,
+) -> Result<String, ShipItError> {
+    use gitlab::api::projects::repository::tags::CreateTag;
+
+    let client = GitlabClient::builder(domain, token)
+        .build_async()
+        .await
+        .map_err(|e| ShipItError::Gitlab(e))?;
+
+    let create_tag = CreateTag::builder()
+        .project(project_id)
+        .tag_name(tag_name)
+        .ref_(branch)
+        .message(notes)
+        .build()
+        .map_err(|e| ShipItError::Error(format!("Failed to build GitLab tag: {}", e)))?;
+
+    let tag: serde_json::Value = create_tag
+        .query_async(&client)
+        .await
+        .map_err(|e| ShipItError::Error(format!("Failed to create GitLab tag: {}", e)))?;
+
+    tag["web_url"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| ShipItError::Error("Failed to get tag url from GitLab response".to_string()))
+}
+
 /// Parses the project path from the remote url and queries the GitLab API
 /// to resolve the numeric project id.
 pub(crate) async fn lookup_gitlab_project_id(

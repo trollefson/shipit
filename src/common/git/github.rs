@@ -37,6 +37,38 @@ impl GitPlatform for Github {
     }
 }
 
+/// Creates a GitHub release for the given tag name, targeting the given branch.
+pub(crate) async fn create_github_release(
+    domain: &str,
+    token: &str,
+    owner: &str,
+    repo_name: &str,
+    tag_name: &str,
+    branch: &str,
+    notes: &str,
+) -> Result<String, ShipItError> {
+    let mut builder = OctocrabBuilder::new().personal_token(token.to_string());
+    if domain != "github.com" {
+        let base_uri = format!("https://{}/api/v3/", domain);
+        builder = builder
+            .base_uri(base_uri)
+            .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
+    }
+    let octo = builder.build().map_err(|e| ShipItError::Github(e))?;
+
+    let release = octo
+        .repos(owner, repo_name)
+        .releases()
+        .create(tag_name)
+        .body(notes)
+        .target_commitish(branch)
+        .send()
+        .await
+        .map_err(|e| ShipItError::Github(e))?;
+
+    Ok(release.html_url.to_string())
+}
+
 /// Returns the GitHub `owner/repo` identifier by parsing it directly from the remote url.
 pub(crate) fn lookup_github_identifier(remote_url: &str) -> Result<String, ShipItError> {
     extract_repo_path(remote_url).ok_or_else(|| {

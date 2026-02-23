@@ -18,6 +18,15 @@ impl Context {
                 }
                 settings.shipit.dryrun = args.dryrun;
             }
+            Commands::B2t(args) => {
+                if let Some(selected) = &args.agent {
+                    settings.shipit.agent = match selected {
+                        Agent::Ollama => "ollama".to_string(),
+                        Agent::Shipit => "shipit".to_string(),
+                    };
+                }
+                settings.shipit.dryrun = args.dryrun;
+            }
             Commands::Config { .. } => {}
         }
         Ok(Self { settings })
