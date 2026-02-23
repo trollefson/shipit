@@ -377,10 +377,10 @@ pub(crate) fn format_categorized_commits(commits: &HashMap<String, Vec<String>>)
 fn find_commit_category(text: &str) -> &'static str {
     for token in text.split_whitespace() {
         let token = token.trim_start_matches('[');
-        let commit_type = token.split(['(', ':']).next().unwrap_or("").trim();
-        match commit_type {
+        let commit_type = String::from(token.split(['(', ':']).next().unwrap_or("").trim()).to_lowercase();
+        match commit_type.as_str() {
             "feat" => return "features",
-            "fix" => return "bug_fixes",
+            "fix" | "bug"  => return "bug_fixes",
             "ci" | "build" | "chore" | "perf" | "refactor" | "style" | "test" => {
                 return "infrastructure"
             }
@@ -661,6 +661,12 @@ mod tests {
         let agent = OllamaAgent::new(ollama_settings(server.address().port()));
         let result = summarize_with_agent("text", &agent).await;
         assert!(matches!(result, Err(ShipItError::Error(_))));
+    }
+
+    #[test]
+    fn test_find_commit_category() {
+        let _result = find_commit_category("See merge request endpoint/project_name!1 ec42387abc\n- Merge branch 'feat' into 'main'\n\nBUG: format the message\n\nmore info");
+        assert!(matches!("bug_fixes", _result));
     }
 
     #[test]
