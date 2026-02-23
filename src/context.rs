@@ -11,7 +11,6 @@ impl Context {
         match &args.command {
             Commands::B2b { agent, dryrun, .. } => {
                 if let Some(selected) = agent {
-                    settings.shipit.ai = true;
                     settings.shipit.agent = match selected {
                         Agent::Ollama => "ollama".to_string(),
                         Agent::Shipit => "shipit".to_string(),

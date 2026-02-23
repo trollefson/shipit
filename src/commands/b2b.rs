@@ -181,7 +181,7 @@ pub async fn branch_to_branch(
         }
 
         // ask a local llm to summarize these commit messages
-        if ctx.settings.shipit.ai {
+        if !ctx.settings.shipit.agent.is_empty() {
             let spinner = ProgressBar::new_spinner();
             spinner.set_style(
                 ProgressStyle::default_spinner()
@@ -337,7 +337,6 @@ mod tests {
 
     fn make_ctx(
         dryrun: bool,
-        ai: bool,
         agent: &str,
         gitlab_token: Option<&str>,
         github_token: Option<&str>,
@@ -346,7 +345,6 @@ mod tests {
             settings: Settings {
                 shipit: ShipitSettings {
                     agent: agent.to_string(),
-                    ai,
                     commits: "custom".to_string(),
                     dryrun,
                 },
@@ -422,7 +420,7 @@ mod tests {
         repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
             .unwrap();
 
-        let ctx = make_ctx(false, false, "ollama", None, None);
+        let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "does-not-exist".to_string(),
@@ -452,7 +450,7 @@ mod tests {
         let base_commit = repo.find_commit(base_oid).unwrap();
         repo.branch("source", &base_commit, false).unwrap();
 
-        let ctx = make_ctx(false, false, "ollama", None, None);
+        let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -482,7 +480,7 @@ mod tests {
         let base_commit = repo.find_commit(base_oid).unwrap();
         repo.branch("source", &base_commit, false).unwrap();
 
-        let ctx = make_ctx(true, false, "ollama", None, None); // dryrun → exits before remote
+        let ctx = make_ctx(true, "", None, None); // dryrun → exits before remote
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -513,7 +511,7 @@ mod tests {
         repo.branch("source", &base_commit, false).unwrap();
         repo.branch("target", &base_commit, false).unwrap();
 
-        let ctx = make_ctx(false, false, "ollama", None, None);
+        let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -534,7 +532,7 @@ mod tests {
     async fn test_dryrun_exits_after_commit_discovery_without_reaching_remote() {
         let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
 
-        let ctx = make_ctx(true, false, "ollama", None, None);
+        let ctx = make_ctx(true, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -555,7 +553,7 @@ mod tests {
     async fn test_dryrun_with_description_exits_without_reaching_remote() {
         let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
 
-        let ctx = make_ctx(true, false, "ollama", None, None);
+        let ctx = make_ctx(true, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -576,7 +574,7 @@ mod tests {
     async fn test_shipit_agent_categorizes_commits_and_returns_ok() {
         let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
 
-        let ctx = make_ctx(true, true, "shipit", None, None);
+        let ctx = make_ctx(true, "shipit", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -597,7 +595,7 @@ mod tests {
     async fn test_unknown_agent_name_returns_shipit_error() {
         let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
 
-        let ctx = make_ctx(false, true, "unknown_agent", None, None);
+        let ctx = make_ctx(false, "unknown_agent", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -618,7 +616,7 @@ mod tests {
     async fn test_missing_remote_returns_git_error() {
         let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
 
-        let ctx = make_ctx(false, false, "ollama", None, None);
+        let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -641,7 +639,7 @@ mod tests {
         repo.remote("origin", "https://bitbucket.org/owner/repo.git")
             .unwrap();
 
-        let ctx = make_ctx(false, false, "ollama", None, None);
+        let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -664,7 +662,7 @@ mod tests {
         repo.remote("origin", "https://gitlab.com/owner/repo.git")
             .unwrap();
 
-        let ctx = make_ctx(false, false, "ollama", None, None);
+        let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -688,7 +686,7 @@ mod tests {
             .unwrap();
         pin_remote_tracking(&repo, "origin", "source", source_oid);
 
-        let ctx = make_ctx(false, false, "ollama", None, Some("fake-token"));
+        let ctx = make_ctx(false, "", None, Some("fake-token"));
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -712,7 +710,7 @@ mod tests {
             .unwrap();
         pin_remote_tracking(&repo, "origin", "source", source_oid);
 
-        let ctx = make_ctx(false, false, "ollama", Some("fake-token"), None);
+        let ctx = make_ctx(false, "", Some("fake-token"), None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -736,7 +734,7 @@ mod tests {
         // empty and the function returns Ok early.
         let (dir, _repo, _, _) = setup_diverged_repo("source", "target");
 
-        let ctx = make_ctx(false, false, "ollama", None, None);
+        let ctx = make_ctx(false, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),
@@ -789,7 +787,7 @@ mod tests {
         )
         .unwrap();
 
-        let ctx = make_ctx(true, false, "ollama", None, None);
+        let ctx = make_ctx(true, "", None, None);
         let result = branch_to_branch(
             &ctx,
             "source".to_string(),

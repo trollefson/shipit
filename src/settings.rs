@@ -22,7 +22,6 @@ impl Default for Settings {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShipitSettings {
     pub agent: String,
-    pub ai: bool,
     pub commits: String,
     pub dryrun: bool,
 }
@@ -30,8 +29,7 @@ pub struct ShipitSettings {
 impl Default for ShipitSettings {
     fn default() -> Self {
         Self {
-            agent: "ollama".to_string(),
-            ai: false,
+            agent: String::new(),
             commits: "custom".to_string(),
             dryrun: false,
         }
