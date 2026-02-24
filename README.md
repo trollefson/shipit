@@ -74,7 +74,7 @@ shipit b2b develop main --dry-run
 ### `b2b` — Branch to Branch
 
 ```
-shipit b2b <source> <target> [--agent <agent>] [--dryrun] [--dir <path>] [--id <identifier>] [--remote <name>] [--prompt <text>] [--description <text>]
+shipit b2b <source> <target> [--agent <agent>] [--dry-run] [--dir <path>] [--id <identifier>] [--remote <name>] [--prompt <text>] [--title <text>] [--description <text>]
 ```
 
 | Argument / Flag                   | Description |
@@ -87,6 +87,7 @@ shipit b2b <source> <target> [--agent <agent>] [--dryrun] [--dir <path>] [--id <
 | `--id <identifier>`               | Project identifier — `owner/repo` for GitHub, numeric id for GitLab (auto-detected from remote url if omitted) |
 | `--remote <name>`                 | Git remote to detect platform from (defaults to `origin`) |
 | `--prompt <text>`                 | Prompt prefix sent to Ollama when `--agent ollama` is set (overrides the `ollama.prompt` config value) |
+| `--title <text>`                  | Override the merge/pull request title (defaults to `<source> to <target>`) |
 | `--description <text>`            | Use a custom description for the merge/pull request (skips commit discovery and ai summary) |
 
 **What happens:**

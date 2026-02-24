@@ -3,16 +3,17 @@ use std::collections::HashMap;
 use crate::error::ShipItError;
 
 pub(crate) trait GitPlatform {
-    async fn open(&self, source: &str, target: &str, description: &str) -> Result<String, ShipItError>;
+    async fn open(&self, source: &str, target: &str, title: &str, description: &str) -> Result<String, ShipItError>;
 }
 
 pub(crate) async fn open_merge_request<P: GitPlatform>(
     platform: &P,
     source: &str,
     target: &str,
+    title: &str,
     description: &str,
 ) -> Result<String, ShipItError> {
-    platform.open(source, target, description).await
+    platform.open(source, target, title, description).await
 }
 
 /// Extracts the repository path from a git remote url.
@@ -152,26 +153,26 @@ mod tests {
     struct MockPlatformError;
 
     impl GitPlatform for MockPlatformSuccess {
-        async fn open(&self, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
+        async fn open(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
             Ok("https://github.com/owner/repo/pull/1".to_string())
         }
     }
 
     impl GitPlatform for MockPlatformError {
-        async fn open(&self, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
+        async fn open(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, ShipItError> {
             Err(ShipItError::Error("platform returned an error".to_string()))
         }
     }
 
     #[tokio::test]
     async fn test_open_merge_request_success() {
-        let result = open_merge_request(&MockPlatformSuccess, "feat", "main", "desc").await;
+        let result = open_merge_request(&MockPlatformSuccess, "feat", "main", "feat to main", "desc").await;
         assert_eq!(result.unwrap(), "https://github.com/owner/repo/pull/1");
     }
 
     #[tokio::test]
     async fn test_open_merge_request_propagates_platform_error() {
-        let result = open_merge_request(&MockPlatformError, "feat", "main", "desc").await;
+        let result = open_merge_request(&MockPlatformError, "feat", "main", "feat to main", "desc").await;
         assert!(matches!(result, Err(ShipItError::Error(_))));
     }
 

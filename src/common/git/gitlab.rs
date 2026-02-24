@@ -11,7 +11,7 @@ pub(crate) struct Gitlab {
 }
 
 impl GitPlatform for Gitlab {
-    async fn open(&self, source: &str, target: &str, description: &str) -> Result<String, ShipItError> {
+    async fn open(&self, source: &str, target: &str, title: &str, description: &str) -> Result<String, ShipItError> {
         let client = GitlabClient::builder(&self.domain, &self.token)
             .build_async()
             .await
@@ -21,7 +21,7 @@ impl GitPlatform for Gitlab {
             .project(self.project_id)
             .source_branch(source)
             .target_branch(target)
-            .title(format!("{} to {}", source, target))
+            .title(title)
             .description(description)
             .remove_source_branch(true)
             .build()

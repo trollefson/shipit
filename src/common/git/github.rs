@@ -11,7 +11,7 @@ pub(crate) struct Github {
 }
 
 impl GitPlatform for Github {
-    async fn open(&self, source: &str, target: &str, description: &str) -> Result<String, ShipItError> {
+    async fn open(&self, source: &str, target: &str, title: &str, description: &str) -> Result<String, ShipItError> {
         let mut builder = OctocrabBuilder::new().personal_token(self.token.clone());
 
         if self.domain != "github.com" {
@@ -24,7 +24,7 @@ impl GitPlatform for Github {
 
         let pr = octo
             .pulls(&self.owner, &self.repo)
-            .create(format!("{} to {}", source, target), source, target)
+            .create(title, source, target)
             .body(description)
             .send()
             .await

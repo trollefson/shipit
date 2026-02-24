@@ -54,6 +54,11 @@ pub struct B2bArgs {
     pub prompt: Option<String>,
     #[arg(
         long,
+        help = "Title to use for the merge/pull request (defaults to '<source> to <target>')"
+    )]
+    pub title: Option<String>,
+    #[arg(
+        long,
         help = "Description to use for the merge/pull request (skips commit discovery and ai summary)"
     )]
     pub description: Option<String>,
