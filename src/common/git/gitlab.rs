@@ -108,6 +108,38 @@ pub(crate) async fn lookup_gitlab_project_id(
         .ok_or_else(|| ShipItError::Error("GitLab project response missing 'id' field".to_string()))
 }
 
+/// Fetches the name of the most recent tag in a GitLab project.
+///
+/// Tags are requested ordered by `version` descending so the first item is the
+/// latest semver tag; falls back to the first item if no versioned tags exist.
+pub(crate) async fn fetch_latest_gitlab_tag(
+    domain: &str,
+    token: &str,
+    project_id: u64,
+) -> Result<String, ShipItError> {
+    use gitlab::api::projects::repository::tags::Tags;
+
+    let client = GitlabClient::builder(domain, token)
+        .build_async()
+        .await
+        .map_err(|e| ShipItError::Gitlab(e))?;
+
+    let endpoint = Tags::builder()
+        .project(project_id)
+        .build()
+        .map_err(|e| ShipItError::Error(format!("Failed to build GitLab tags query: {}", e)))?;
+
+    let tags: Vec<serde_json::Value> = gitlab::api::paged(endpoint, gitlab::api::Pagination::Limit(1))
+        .query_async(&client)
+        .await
+        .map_err(|e| ShipItError::Error(format!("Failed to fetch GitLab tags: {}", e)))?;
+
+    tags.into_iter()
+        .next()
+        .and_then(|t| t["name"].as_str().map(|s| s.to_string()))
+        .ok_or_else(|| ShipItError::Error("No tags found in GitLab project".to_string()))
+}
+
 /// Tries to parse a GitLab MR IID from a merge commit message.
 ///
 /// Recognizes `"See merge request group/project!123"` which GitLab appends to

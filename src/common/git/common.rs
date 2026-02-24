@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use regex::Regex;
+
 use crate::error::ShipItError;
 
 pub(crate) trait GitPlatform {
@@ -120,6 +122,41 @@ pub(crate) fn categorize_commits(commits: &[&str]) -> HashMap<String, Vec<String
     }
 
     map
+}
+
+/// Computes the next semantic version given a categorized-commit map and the
+/// current version string. The version digits are extracted via regex, so
+/// prefixes like `v`, `version`, `v `, etc. are ignored.
+///
+/// Bump rules (first match wins):
+///   - any `features`     → **minor** bump, patch reset to 0
+///   - any `bug_fixes`    → **patch** bump
+///   - any other non-empty category (`infrastructure`, `docs`, `misc`) → **patch** bump
+///   - nothing            → version unchanged
+///
+/// Always returns a bare `"MAJOR.MINOR.PATCH"` string, or `None` if no
+/// `MAJOR.MINOR.PATCH` digits can be found in `current`.
+pub(crate) fn next_version(
+    commits: &HashMap<String, Vec<String>>,
+    current: &str,
+) -> Option<String> {
+    let re = Regex::new(r"(\d+)\.(\d+)\.(\d+)").unwrap();
+    let caps = re.captures(current)?;
+    let major: u64 = caps[1].parse().ok()?;
+    let minor: u64 = caps[2].parse().ok()?;
+    let patch: u64 = caps[3].parse().ok()?;
+
+    let has = |key: &str| commits.get(key).is_some_and(|v| !v.is_empty());
+
+    let (new_minor, new_patch) = if has("features") {
+        (minor + 1, 0)
+    } else if has("bug_fixes") || has("infrastructure") || has("docs") || has("misc") {
+        (minor, patch + 1)
+    } else {
+        (minor, patch)
+    };
+
+    Some(format!("{}.{}.{}", major, new_minor, new_patch))
 }
 
 #[cfg(test)]
@@ -407,5 +444,85 @@ mod tests {
             format_categorized_commits(&map),
             "## Docs\n- docs: fix typo\n\n## Features\n- feat: new flag\n"
         );
+    }
+
+    // ── next_version ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_next_version_features_bumps_minor_and_resets_patch() {
+        let map = categorize_commits(&["feat: add search"]);
+        assert_eq!(next_version(&map, "1.3.7"), Some("1.4.0".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_bug_fixes_bumps_patch() {
+        let map = categorize_commits(&["fix: null deref"]);
+        assert_eq!(next_version(&map, "1.3.7"), Some("1.3.8".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_infrastructure_bumps_patch() {
+        let map = categorize_commits(&["ci: add release workflow"]);
+        assert_eq!(next_version(&map, "2.0.0"), Some("2.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_docs_bumps_patch() {
+        let map = categorize_commits(&["docs: update README"]);
+        assert_eq!(next_version(&map, "0.1.0"), Some("0.1.1".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_misc_bumps_patch() {
+        let map = categorize_commits(&["wip: half done"]);
+        assert_eq!(next_version(&map, "1.0.0"), Some("1.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_features_takes_priority_over_bug_fixes() {
+        let map = categorize_commits(&["feat: new thing", "fix: broken thing"]);
+        assert_eq!(next_version(&map, "1.3.7"), Some("1.4.0".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_no_commits_unchanged() {
+        let map = categorize_commits(&[]);
+        assert_eq!(next_version(&map, "1.3.7"), Some("1.3.7".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_invalid_current_returns_none() {
+        let map = categorize_commits(&["feat: something"]);
+        assert_eq!(next_version(&map, "not-a-version"), None);
+    }
+
+    #[test]
+    fn test_next_version_partial_version_returns_none() {
+        let map = categorize_commits(&["feat: something"]);
+        assert_eq!(next_version(&map, "1.2"), None);
+    }
+
+    #[test]
+    fn test_next_version_v_prefix() {
+        let map = categorize_commits(&["feat: add search"]);
+        assert_eq!(next_version(&map, "v1.3.7"), Some("1.4.0".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_version_prefix() {
+        let map = categorize_commits(&["fix: crash"]);
+        assert_eq!(next_version(&map, "version1.3.7"), Some("1.3.8".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_v_space_prefix() {
+        let map = categorize_commits(&["fix: crash"]);
+        assert_eq!(next_version(&map, "v 1.3.7"), Some("1.3.8".to_string()));
+    }
+
+    #[test]
+    fn test_next_version_prefix_stripped_from_output() {
+        let map = categorize_commits(&[]);
+        assert_eq!(next_version(&map, "v2.4.1"), Some("2.4.1".to_string()));
     }
 }

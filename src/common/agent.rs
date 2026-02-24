@@ -1,11 +1,24 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde_json::json;
 
+use crate::common::git::common::format_categorized_commits;
 use crate::error::ShipItError;
 use crate::settings::OllamaSettings;
 
 pub(crate) trait Agent {
     async fn send_prompt(&self, text: &str) -> Result<String, ShipItError>;
+
+    async fn generate_summary(
+        &self,
+        description: &str,
+        _categorized: &HashMap<String, Vec<String>>,
+    ) -> Result<String, ShipItError> {
+        self.send_prompt(description).await
+    }
 }
 
 pub(crate) struct OllamaAgent {
@@ -20,6 +33,26 @@ impl OllamaAgent {
 }
 
 impl Agent for OllamaAgent {
+    async fn generate_summary(
+        &self,
+        description: &str,
+        _categorized: &HashMap<String, Vec<String>>,
+    ) -> Result<String, ShipItError> {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{spinner:.cyan} {msg}")
+                .unwrap(),
+        );
+        spinner.set_message(format!("Generating with {}...", self.settings.model));
+        spinner.enable_steady_tick(Duration::from_millis(80));
+
+        let result = self.send_prompt(description).await;
+        spinner.finish_and_clear();
+        result
+    }
+
     async fn send_prompt(&self, text: &str) -> Result<String, ShipItError> {
         let client = &self.client;
 
@@ -52,6 +85,23 @@ impl Agent for OllamaAgent {
     }
 }
 
+pub(crate) struct ShipitAgent;
+
+impl Agent for ShipitAgent {
+    async fn send_prompt(&self, _text: &str) -> Result<String, ShipItError> {
+        Ok(String::new())
+    }
+
+    async fn generate_summary(
+        &self,
+        _description: &str,
+        categorized: &HashMap<String, Vec<String>>,
+    ) -> Result<String, ShipItError> {
+        Ok(format_categorized_commits(categorized))
+    }
+}
+
+#[cfg(test)]
 pub(crate) async fn summarize_with_agent<A: Agent>(
     text: &str,
     agent: &A,

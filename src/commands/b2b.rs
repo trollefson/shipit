@@ -1,130 +1,33 @@
-use git2::Repository;
-
 use crate::cli::B2bArgs;
 use crate::context::Context;
 use crate::error::ShipItError;
 use crate::common::{
-    collect_messages, enrich_messages, generate_summary, open_merge_request, open_repo,
-    resolve_project_id, resolve_remote_url, Github, Gitlab,
+    categorize_commits, check_needs_push, collect_commits, collect_messages, enrich_messages,
+    open_platform_mr, open_repo, resolve_project_id, resolve_remote_url, suggest_title,
+    OllamaAgent, ShipitAgent,
 };
-
-fn collect_commits(
-    repo: &Repository,
-    source: &git2::Branch<'_>,
-    args_target: &str,
-    only_merges: bool,
-) -> Result<Vec<git2::Oid>, ShipItError> {
-    let target = repo.find_branch(args_target, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
-    let target_oid = target
-        .get()
-        .target()
-        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the target branch!")))?;
-
-    let target_oid_on_source = repo.find_commit(target_oid).unwrap();
-
-    let mut revwalk = repo.revwalk().map_err(|e| ShipItError::Git(e))?;
-    let root_ref = "refs/heads/";
-    let branch_ref = source
-        .name().map_err(|e| ShipItError::Git(e))?
-        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to unwrap the name of the source branch!")))?;
-    let full_ref = root_ref.to_string() + branch_ref;
-    revwalk.push_ref(&full_ref).map_err(|e| ShipItError::Git(e))?;
-
-    let target_oid_hash = target_oid_on_source.id();
-    revwalk.hide(target_oid_hash).map_err(|e| ShipItError::Git(e))?;
-
-    let mut commits = Vec::new();
-    for oid in revwalk {
-        commits.push(oid.map_err(|e| ShipItError::Git(e))?);
-    }
-
-    let commits: Vec<_> = if only_merges {
-        commits.into_iter().filter(|oid| {
-            repo.find_commit(*oid)
-                .map(|c| c.parent_count() > 1)
-                .unwrap_or(false)
-        }).collect()
-    } else {
-        commits
-    };
-
-    Ok(commits)
-}
-
-fn check_needs_push(
-    repo: &Repository,
-    source: &git2::Branch<'_>,
-    remote_name: &str,
-    source_branch: &str,
-) -> Result<bool, ShipItError> {
-    let local_oid = source.get().target()
-        .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to get source branch oid")))?;
-    let remote_tracking_ref = format!("refs/remotes/{}/{}", remote_name, source_branch);
-    match repo.find_reference(&remote_tracking_ref) {
-        Ok(remote_ref) => match remote_ref.target() {
-            Some(remote_oid) => {
-                let (ahead, _) = repo.graph_ahead_behind(local_oid, remote_oid)
-                    .map_err(|e| ShipItError::Git(e))?;
-                Ok(ahead > 0)
-            }
-            None => Ok(true),
-        },
-        Err(_) => Ok(true),
-    }
-}
-
-async fn open_platform_mr(
-    ctx: &Context,
-    resolved_id: &str,
-    source: &str,
-    target: &str,
-    title: &str,
-    summary: &str,
-    is_github: bool,
-    is_gitlab: bool,
-) -> Result<String, ShipItError> {
-    if is_github {
-        let parts: Vec<&str> = resolved_id.splitn(2, '/').collect();
-        if parts.len() != 2 {
-            return Err(ShipItError::Error(format!("GitHub project identifier '{}' must be in 'owner/repo' format.", resolved_id)));
-        }
-        let (owner, gh_repo) = (parts[0], parts[1]);
-        let platform = Github {
-            domain: ctx.settings.github.domain.clone(),
-            token: ctx.settings.github.token.as_deref().unwrap().to_string(),
-            owner: owner.to_string(),
-            repo: gh_repo.to_string(),
-        };
-        open_merge_request(&platform, source, target, title, summary)
-            .await
-            .map_err(|e| ShipItError::Error(format!("Failed to open a GitHub pr: {}", e)))
-    } else if is_gitlab {
-        let project_id: u64 = resolved_id.parse()
-            .map_err(|_| ShipItError::Error(format!("GitLab project identifier '{}' must be a numeric project id.", resolved_id)))?;
-        let platform = Gitlab {
-            domain: ctx.settings.gitlab.domain.clone(),
-            token: ctx.settings.gitlab.token.as_deref().unwrap().to_string(),
-            project_id,
-        };
-        open_merge_request(&platform, source, target, title, summary)
-            .await
-            .map_err(|e| ShipItError::Error(format!("Failed to open a GitLab mr: {}", e)))
-    } else {
-        Err(ShipItError::Error("Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string()))
-    }
-}
+use crate::common::agent::Agent;
 
 pub async fn branch_to_branch(ctx: &Context, args: B2bArgs) -> Result<(), ShipItError> {
     let repo = open_repo(args.dir);
     let source = repo.find_branch(&args.source, git2::BranchType::Local).map_err(|e| ShipItError::Git(e))?;
 
+    // Skip commit collection only when both description and title are explicitly provided,
+    // since messages may still be needed for title suggestion even with a custom description.
+    let messages = if args.description.is_some() && args.title.is_some() {
+        vec![]
+    } else {
+        let commits = collect_commits(&repo, &source, &args.target, args.only_merges)?;
+        let msgs = collect_messages(&repo, commits)?;
+        enrich_messages(ctx, &repo, &args.remote, msgs).await
+    };
+
+    let refs: Vec<&str> = messages.iter().map(|s| s.as_str()).collect();
+    let categorized = categorize_commits(&refs);
+
     let mut summary = if let Some(provided) = args.description {
         provided
     } else {
-        let commits = collect_commits(&repo, &source, &args.target, args.only_merges)?;
-        let messages = collect_messages(&repo, commits)?;
-        let messages = enrich_messages(ctx, &repo, &args.remote, messages).await;
-
         let description = messages.join(",");
 
         if description.is_empty() {
@@ -132,10 +35,17 @@ pub async fn branch_to_branch(ctx: &Context, args: B2bArgs) -> Result<(), ShipIt
             return Ok(());
         }
 
-        generate_summary(ctx, &description, &messages, args.prompt, "Generating merge request description with").await?
+        match ctx.settings.shipit.agent.as_str() {
+            "shipit" => ShipitAgent.generate_summary(&description, &categorized).await?,
+            "ollama" => {
+                let mut ollama = ctx.settings.ollama.clone();
+                if let Some(p) = args.prompt { ollama.prompt = p; }
+                OllamaAgent::new(ollama).generate_summary(&description, &categorized).await?
+            }
+            "" => description,
+            unknown => return Err(ShipItError::Error(format!("Unknown ai agent: '{}'", unknown))),
+        }
     };
-
-    let title = args.title.unwrap_or_else(|| format!("{} to {}", args.source, args.target));
 
     crate::output::print_content("The merge request description is:", &summary);
     summary += "\n\n\n*This request was generated by [Shipit](https://gitshipit.net)* 🚢";
@@ -148,6 +58,13 @@ pub async fn branch_to_branch(ctx: &Context, args: B2bArgs) -> Result<(), ShipIt
     let remote_url = resolve_remote_url(&repo, &args.remote)?;
     let (is_github, is_gitlab) = (remote_url.contains("github"), remote_url.contains("gitlab"));
     let resolved_id = resolve_project_id(ctx, &remote_url, args.id, is_github, is_gitlab).await?;
+
+    let title = if let Some(t) = args.title {
+        t
+    } else {
+        suggest_title(ctx, is_github, is_gitlab, &resolved_id, &categorized).await
+            .unwrap_or_else(|| format!("{} to {}", args.source, args.target))
+    };
 
     if check_needs_push(&repo, &source, &args.remote, &args.source)? {
         crate::output::print_push_prompt(&args.remote, &args.source);
@@ -304,7 +221,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_description_skips_target_branch_lookup() {
+    async fn test_both_title_and_description_skips_target_branch_lookup() {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
         let sig = Signature::now("t", "t@t.com").unwrap();
@@ -316,6 +233,8 @@ mod tests {
         let base_commit = repo.find_commit(base_oid).unwrap();
         repo.branch("source", &base_commit, false).unwrap();
 
+        // Both title and description are provided — commit collection is skipped entirely,
+        // so a nonexistent target branch does not cause an error.
         let ctx = make_ctx(true, "", None, None); // dryrun → exits before remote
         let result = branch_to_branch(
             &ctx,
@@ -324,6 +243,7 @@ mod tests {
                 target: "nonexistent-target".to_string(),
                 dir: Some(dir.path().to_str().unwrap().to_string()),
                 remote: "origin".to_string(),
+                title: Some("My custom title".to_string()),
                 description: Some("My custom description".to_string()),
                 ..Default::default()
             },

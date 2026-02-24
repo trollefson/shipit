@@ -4,8 +4,8 @@ use crate::cli::B2tArgs;
 use crate::context::Context;
 use crate::error::ShipItError;
 use crate::common::{
-    collect_messages, create_github_release, create_gitlab_tag, enrich_messages, generate_summary,
-    open_repo, resolve_project_id, resolve_remote_url,
+    categorize_commits, collect_messages, create_github_release, create_gitlab_tag,
+    enrich_messages, generate_summary, open_repo, resolve_project_id, resolve_remote_url,
 };
 
 /// Finds the most recent tag reachable from (and an ancestor of) `branch_oid`.
@@ -207,7 +207,9 @@ pub async fn branch_to_tag(ctx: &Context, args: B2tArgs) -> Result<(), ShipItErr
         }
 
         let description = messages.join(",");
-        generate_summary(ctx, &description, &messages, args.prompt, "Generating tag notes with").await?
+        let refs: Vec<&str> = messages.iter().map(|s| s.as_str()).collect();
+        let categorized = categorize_commits(&refs);
+        generate_summary(ctx, &description, &categorized, args.prompt).await?
     };
 
     crate::output::print_content("The tag notes are:", &summary);

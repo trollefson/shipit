@@ -106,6 +106,39 @@ pub(crate) fn parse_github_pr_number(message: &str) -> Option<u64> {
     None
 }
 
+/// Fetches the name of the most recent tag in a GitHub repository.
+///
+/// Tags are returned by the GitHub API in reverse commit-date order, so the
+/// first item is the latest tag.
+pub(crate) async fn fetch_latest_github_tag(
+    domain: &str,
+    token: &str,
+    owner: &str,
+    repo_name: &str,
+) -> Result<String, ShipItError> {
+    let mut builder = OctocrabBuilder::new().personal_token(token.to_string());
+    if domain != "github.com" {
+        let base_uri = format!("https://{}/api/v3/", domain);
+        builder = builder
+            .base_uri(base_uri)
+            .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
+    }
+    let octo = builder.build().map_err(|e| ShipItError::Github(e))?;
+
+    let tags = octo
+        .repos(owner, repo_name)
+        .list_tags()
+        .send()
+        .await
+        .map_err(|e| ShipItError::Github(e))?;
+
+    tags.items
+        .into_iter()
+        .next()
+        .map(|t| t.name)
+        .ok_or_else(|| ShipItError::Error("No tags found in GitHub repository".to_string()))
+}
+
 /// Fetches the title and HTML URL of a GitHub pull request.
 ///
 /// Builds an Octocrab client from the supplied credentials, then calls
