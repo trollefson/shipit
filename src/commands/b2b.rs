@@ -213,7 +213,7 @@ mod tests {
                 target: "does-not-exist".to_string(),
                 dir: Some(dir.path().to_str().unwrap().to_string()),
                 remote: "origin".to_string(),
-                // no description → code must look up the target branch
+                // no description - code must look up the target branch
                 ..Default::default()
             },
         )
@@ -238,7 +238,7 @@ mod tests {
 
         // Both title and description are provided — commit collection is skipped entirely,
         // so a nonexistent target branch does not cause an error.
-        let ctx = make_ctx(true, "", None, None); // dryrun → exits after title generation
+        let ctx = make_ctx(true, "", None, None); // dryrun - exits after title generation
         let result = branch_to_branch(
             &ctx,
             B2bArgs {
@@ -520,7 +520,7 @@ mod tests {
         let tree_id = repo.index().unwrap().write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
 
-        // base commit → shared ancestor
+        // base commit - shared ancestor
         let base_oid = repo
             .commit(Some("HEAD"), &sig, &sig, "base commit", &tree, &[])
             .unwrap();

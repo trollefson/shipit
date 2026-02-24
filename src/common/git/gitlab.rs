@@ -74,6 +74,42 @@ pub(crate) async fn create_gitlab_tag(
         .ok_or_else(|| ShipItError::Error("Failed to get tag url from GitLab response".to_string()))
 }
 
+/// Creates a GitLab release for an already-existing tag.
+///
+/// Uses the tag name as the release name and `notes` as the release description.
+pub(crate) async fn create_gitlab_release(
+    domain: &str,
+    token: &str,
+    project_id: u64,
+    tag_name: &str,
+    notes: &str,
+) -> Result<String, ShipItError> {
+    use gitlab::api::projects::releases::CreateRelease;
+
+    let client = GitlabClient::builder(domain, token)
+        .build_async()
+        .await
+        .map_err(|e| ShipItError::Gitlab(e))?;
+
+    let create_release = CreateRelease::builder()
+        .project(project_id)
+        .tag_name(tag_name)
+        .name(tag_name)
+        .description(notes)
+        .build()
+        .map_err(|e| ShipItError::Error(format!("Failed to build GitLab release: {}", e)))?;
+
+    let release: serde_json::Value = create_release
+        .query_async(&client)
+        .await
+        .map_err(|e| ShipItError::Error(format!("Failed to create GitLab release: {}", e)))?;
+
+    release["_links"]["self"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| ShipItError::Error("Failed to get release url from GitLab response".to_string()))
+}
+
 /// Parses the project path from the remote url and queries the GitLab API
 /// to resolve the numeric project id.
 pub(crate) async fn lookup_gitlab_project_id(

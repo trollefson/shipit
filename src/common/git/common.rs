@@ -129,10 +129,10 @@ pub(crate) fn categorize_commits(commits: &[&str]) -> HashMap<String, Vec<String
 /// prefixes like `v`, `version`, `v `, etc. are ignored.
 ///
 /// Bump rules (first match wins):
-///   - any `features`     → **minor** bump, patch reset to 0
-///   - any `bug_fixes`    → **patch** bump
-///   - any other non-empty category (`infrastructure`, `docs`, `misc`) → **patch** bump
-///   - nothing            → version unchanged
+///   - any `features`     - **minor** bump, patch reset to 0
+///   - any `bug_fixes`    - **patch** bump
+///   - any other non-empty category (`infrastructure`, `docs`, `misc`) - **patch** bump
+///   - nothing            - version unchanged
 ///
 /// Always returns a bare `"MAJOR.MINOR.PATCH"` string, or `None` if no
 /// `MAJOR.MINOR.PATCH` digits can be found in `current`.
@@ -244,6 +244,23 @@ pub(crate) fn collect_commits_since_tag(
     };
 
     Ok(commits)
+}
+
+/// Reads the annotation message from a local annotated tag.
+///
+/// Returns an error if the tag does not exist or is a lightweight tag (no annotation).
+pub(crate) fn read_tag_annotation(repo: &git2::Repository, tag_name: &str) -> Result<String, ShipItError> {
+    let tag_ref_name = format!("refs/tags/{}", tag_name);
+    let obj = repo
+        .revparse_single(&tag_ref_name)
+        .map_err(|e| ShipItError::Git(e))?;
+    let tag = obj.as_tag().ok_or_else(|| {
+        ShipItError::Error(format!(
+            "Tag '{}' is a lightweight tag with no annotation message",
+            tag_name
+        ))
+    })?;
+    Ok(tag.message().unwrap_or("").to_string())
 }
 
 /// Creates an annotated local tag pointing at `branch_oid`.

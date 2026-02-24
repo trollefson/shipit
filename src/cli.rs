@@ -132,12 +132,40 @@ pub struct Cli {
     pub verbose: u8,
 }
 
+#[derive(Args, Debug, Default)]
+pub struct T2rArgs {
+    #[arg(
+        long,
+        help = "Tag to create the release for (defaults to the latest tag on the platform)"
+    )]
+    pub tag: Option<String>,
+    #[arg(
+        long,
+        help = "Print the release details without creating it"
+    )]
+    pub dry_run: bool,
+    #[arg(
+        long,
+        help = "Path to the git repository (defaults to current directory)"
+    )]
+    pub dir: Option<String>,
+    #[arg(
+        long,
+        help = "GitLab project id or GitHub 'owner/repo' (auto-detected from remote url if not provided)"
+    )]
+    pub id: Option<String>,
+    #[arg(long, default_value = "origin", help = "Name of the git remote to use")]
+    pub remote: String,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Open a merge/pull request from a source branch to a target branch
     B2b(B2bArgs),
     /// Create an annotated tag on a branch with formatted release notes
     B2t(B2tArgs),
+    /// Create a platform release from an existing annotated tag
+    T2r(T2rArgs),
     /// Manage shipit configuration
     Config {
         #[command(subcommand)]

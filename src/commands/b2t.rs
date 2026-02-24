@@ -201,7 +201,7 @@ mod tests {
                 tag: "v1.0.0".to_string(),
                 dir: Some(dir.path().to_str().unwrap().to_string()),
                 remote: "origin".to_string(),
-                // no --latest-tag → auto-detection must find a tag
+                // no --latest-tag - auto-detection must find a tag
                 ..Default::default()
             },
         )
@@ -332,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn test_only_merges_filters_regular_commits() {
         // setup_tagged_repo adds one regular (non-merge) commit on top of the tag.
-        // With only_merges=true that commit is filtered → nothing to do.
+        // With only_merges=true that commit is filtered - nothing to do.
         let (dir, _repo, _, _) = setup_tagged_repo("feature", "v0.1.0");
 
         let ctx = make_ctx(false, "", None, None);

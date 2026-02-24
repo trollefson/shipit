@@ -27,6 +27,9 @@ impl Context {
                 }
                 settings.shipit.dryrun = args.dry_run;
             }
+            Commands::T2r(args) => {
+                settings.shipit.dryrun = args.dry_run;
+            }
             Commands::Config { .. } => {}
         }
         Ok(Self { settings })
