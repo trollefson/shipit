@@ -3,16 +3,32 @@ mod commands;
 mod common;
 mod context;
 mod error;
+mod output;
 mod settings;
 
 use clap::Parser;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use crate::context::Context;
 use crate::error::ShipItError;
 
+fn init_tracing(verbosity: u8) {
+    let level = match verbosity {
+        0 => "warn",
+        1 => "info",
+        _ => "debug",
+    };
+    fmt()
+        .with_env_filter(EnvFilter::new(level))
+        .with_target(false)
+        .with_ansi(true)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<(), ShipItError> {
     let args = cli::Cli::parse();
+    init_tracing(args.verbose);
 
     // Handle commands related to config generation and reading first
     if let cli::Commands::Config { subcommand } = args.command {

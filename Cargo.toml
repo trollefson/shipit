@@ -19,6 +19,9 @@ toml = "1.0.3"
 confy = "2.0.0"
 octocrab = "0.41"
 indicatif = "0.17"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+owo-colors = "4"
 
 [dev-dependencies]
 wiremock = "0.6"

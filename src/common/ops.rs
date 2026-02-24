@@ -24,10 +24,7 @@ pub(crate) fn open_repo(args_dir: Option<String>) -> Repository {
         Ok(repo) => repo,
         Err(e) => panic!("Failed to find a git repo at: {}", e),
     };
-    println!(
-        "Found a git repository at {}",
-        repo.path().to_str().unwrap_or("NOT FOUND")
-    );
+    tracing::debug!("Found a git repository at {}", repo.path().to_str().unwrap_or("NOT FOUND"));
     repo
 }
 
@@ -193,7 +190,7 @@ pub(crate) async fn resolve_project_id(
                     .ok_or_else(|| ShipItError::Error("GitLab token is required to look up the project id.".to_string()))?;
                 let id = lookup_gitlab_project_id(remote_url, &ctx.settings.gitlab.domain, token).await
                     .map_err(|e| ShipItError::Error(format!("Failed to look up GitLab project id from remote url: {}", e)))?;
-                println!("Auto-detected GitLab project id: {}", id);
+                tracing::info!("Auto-detected GitLab project id: {}", id);
                 Ok(id.to_string())
             } else {
                 Err(ShipItError::Error("Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string()))

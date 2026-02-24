@@ -1,4 +1,16 @@
+use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+
+fn styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Green.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Green.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Cyan.on_default())
+        .error(AnsiColor::Red.on_default() | Effects::BOLD)
+        .valid(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .invalid(AnsiColor::Yellow.on_default() | Effects::BOLD)
+}
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum Agent {
@@ -8,7 +20,9 @@ pub enum Agent {
 
 #[derive(Args, Debug, Default)]
 pub struct B2bArgs {
+    #[arg(help = "Source branch to open the merge/pull request from")]
     pub source: String,
+    #[arg(help = "Target branch to merge into")]
     pub target: String,
     #[arg(
         long,
@@ -52,7 +66,9 @@ pub struct B2bArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct B2tArgs {
+    #[arg(help = "Branch to create the tag on")]
     pub branch: String,
+    #[arg(help = "Name of the tag to create")]
     pub tag: String,
     #[arg(
         long,
@@ -97,9 +113,18 @@ pub struct B2tArgs {
 }
 
 #[derive(Parser)]
+#[command(styles = styles())]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+    #[arg(
+        short = 'v',
+        long,
+        action = clap::ArgAction::Count,
+        global = true,
+        help = "Increase log verbosity (-v for info, -vv for debug)"
+    )]
+    pub verbose: u8,
 }
 
 #[derive(Subcommand, Debug)]

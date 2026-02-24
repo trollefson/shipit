@@ -1,5 +1,7 @@
 use std::io::{self, Write};
 
+use owo_colors::OwoColorize;
+
 use crate::error::ShipItError;
 use crate::settings::Settings;
 
@@ -20,7 +22,7 @@ pub fn generate() -> Result<(), ShipItError> {
     let mut settings = Settings::default();
 
     println!();
-    println!("GitHub Personal Access Token (optional)");
+    println!("{}", "GitHub Personal Access Token (optional)".bold().cyan());
     println!("  Providing a token now is optional, but one will be required to open pull");
     println!("  requests or push branches to GitHub.");
     println!("  Required token scopes (classic token):");
@@ -34,13 +36,13 @@ pub fn generate() -> Result<(), ShipItError> {
 
     if !github_token.trim().is_empty() {
         settings.github.token = Some(github_token.trim().to_string());
-        println!("  GitHub token saved.");
+        println!("  {} GitHub token saved.", "✓".green().bold());
     } else {
-        println!("  GitHub token skipped.");
+        println!("  {}", "GitHub token skipped.".dimmed());
     }
 
     println!();
-    println!("GitLab Personal Access Token (optional)");
+    println!("{}", "GitLab Personal Access Token (optional)".bold().cyan());
     println!("  Providing a token now is optional, but one will be required to open merge");
     println!("  requests or push branches to GitLab.");
     println!("  Required token scopes:");
@@ -52,9 +54,9 @@ pub fn generate() -> Result<(), ShipItError> {
 
     if !gitlab_token.trim().is_empty() {
         settings.gitlab.token = Some(gitlab_token.trim().to_string());
-        println!("  GitLab token saved.");
+        println!("  {} GitLab token saved.", "✓".green().bold());
     } else {
-        println!("  GitLab token skipped.");
+        println!("  {}", "GitLab token skipped.".dimmed());
     }
 
     println!();
@@ -64,7 +66,7 @@ pub fn generate() -> Result<(), ShipItError> {
     let path = confy::get_configuration_file_path("shipit", None)
         .map_err(|e| ShipItError::Error(format!("Failed to resolve config path: {}", e)))?;
 
-    println!("Config written to: {}", path.display());
+    println!("{} Config written to: {}", "✓".green().bold(), path.display().bold());
     Ok(())
 }
 
