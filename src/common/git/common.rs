@@ -159,6 +159,110 @@ pub(crate) fn next_version(
     Some(format!("{}.{}.{}", major, new_minor, new_patch))
 }
 
+/// Finds the most recent tag reachable from (and an ancestor of) `branch_oid`.
+pub(crate) fn find_most_recent_tag(repo: &git2::Repository, branch_oid: git2::Oid) -> Result<String, ShipItError> {
+    let mut best: Option<(i64, String)> = None;
+
+    let refs = repo.references().map_err(|e| ShipItError::Git(e))?;
+    for reference in refs {
+        let reference = reference.map_err(|e| ShipItError::Git(e))?;
+        if !reference.is_tag() {
+            continue;
+        }
+
+        let tag_commit = match reference.peel_to_commit() {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let tag_oid = tag_commit.id();
+
+        let merge_base = match repo.merge_base(branch_oid, tag_oid) {
+            Ok(oid) => oid,
+            Err(_) => continue,
+        };
+
+        if merge_base != tag_oid {
+            continue;
+        }
+
+        let name = match reference.shorthand() {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        let seconds = tag_commit.time().seconds();
+        match best {
+            None => best = Some((seconds, name)),
+            Some((best_seconds, _)) if seconds > best_seconds => {
+                best = Some((seconds, name));
+            }
+            _ => {}
+        }
+    }
+
+    best.map(|(_, name)| name).ok_or_else(|| {
+        ShipItError::Error(
+            "No tags found on this branch. Use --latest-tag to specify a tag to compare against."
+                .to_string(),
+        )
+    })
+}
+
+/// Collects commits on `branch` since `tag_name`, optionally filtering to merge commits only.
+pub(crate) fn collect_commits_since_tag(
+    repo: &git2::Repository,
+    branch: &str,
+    tag_name: &str,
+    only_merges: bool,
+) -> Result<Vec<git2::Oid>, ShipItError> {
+    let tag_ref = format!("refs/tags/{}", tag_name);
+    let tag_reference = repo.find_reference(&tag_ref).map_err(|e| ShipItError::Git(e))?;
+    let tag_commit = tag_reference.peel_to_commit().map_err(|e| ShipItError::Git(e))?;
+    let tag_oid = tag_commit.id();
+
+    let mut revwalk = repo.revwalk().map_err(|e| ShipItError::Git(e))?;
+    let branch_ref = format!("refs/heads/{}", branch);
+    revwalk.push_ref(&branch_ref).map_err(|e| ShipItError::Git(e))?;
+    revwalk.hide(tag_oid).map_err(|e| ShipItError::Git(e))?;
+
+    let mut commits = Vec::new();
+    for oid in revwalk {
+        commits.push(oid.map_err(|e| ShipItError::Git(e))?);
+    }
+
+    let commits = if only_merges {
+        commits
+            .into_iter()
+            .filter(|oid| {
+                repo.find_commit(*oid)
+                    .map(|c| c.parent_count() > 1)
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        commits
+    };
+
+    Ok(commits)
+}
+
+/// Creates an annotated local tag pointing at `branch_oid`.
+pub(crate) fn create_local_tag(
+    repo: &git2::Repository,
+    tag_name: &str,
+    branch_oid: git2::Oid,
+    notes: &str,
+) -> Result<(), ShipItError> {
+    let obj = repo
+        .find_object(branch_oid, Some(git2::ObjectType::Commit))
+        .map_err(|e| ShipItError::Git(e))?;
+    let sig = git2::Signature::now("shipit", "shipit@gitshipit.net")
+        .map_err(|e| ShipItError::Git(e))?;
+    repo.tag(tag_name, &obj, &sig, notes, false)
+        .map_err(|e| ShipItError::Git(e))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

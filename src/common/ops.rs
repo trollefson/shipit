@@ -7,8 +7,8 @@ use crate::common::agent::Agent;
 use crate::context::Context;
 use crate::error::ShipItError;
 use crate::common::{
-    extract_repo_path, fetch_github_pr_info, fetch_gitlab_mr_info,
-    fetch_latest_github_tag, fetch_latest_gitlab_tag,
+    create_github_release, create_gitlab_tag, extract_repo_path, fetch_github_pr_info,
+    fetch_gitlab_mr_info, fetch_latest_github_tag, fetch_latest_gitlab_tag,
     lookup_github_identifier, lookup_gitlab_project_id, next_version, open_merge_request,
     parse_github_pr_number, parse_gitlab_mr_iid, Github, Gitlab, OllamaAgent, ShipitAgent,
 };
@@ -312,5 +312,71 @@ pub(crate) async fn open_platform_mr(
             .map_err(|e| ShipItError::Error(format!("Failed to open a GitLab mr: {}", e)))
     } else {
         Err(ShipItError::Error("Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string()))
+    }
+}
+
+/// Creates the tag on the remote platform (GitHub release or GitLab tag).
+pub(crate) async fn create_platform_tag(
+    ctx: &Context,
+    resolved_id: &str,
+    tag_name: &str,
+    branch: &str,
+    notes: &str,
+    is_github: bool,
+    is_gitlab: bool,
+) -> Result<String, ShipItError> {
+    if is_github {
+        let parts: Vec<&str> = resolved_id.splitn(2, '/').collect();
+        if parts.len() != 2 {
+            return Err(ShipItError::Error(format!(
+                "GitHub project identifier '{}' must be in 'owner/repo' format.",
+                resolved_id
+            )));
+        }
+        let (owner, gh_repo) = (parts[0], parts[1]);
+        let token = ctx
+            .settings
+            .github
+            .token
+            .as_deref()
+            .ok_or_else(|| ShipItError::Error("GitHub token is required to create a release.".to_string()))?;
+        create_github_release(
+            &ctx.settings.github.domain,
+            token,
+            owner,
+            gh_repo,
+            tag_name,
+            branch,
+            notes,
+        )
+        .await
+        .map_err(|e| ShipItError::Error(format!("Failed to create a GitHub release: {}", e)))
+    } else if is_gitlab {
+        let project_id: u64 = resolved_id.parse().map_err(|_| {
+            ShipItError::Error(format!(
+                "GitLab project identifier '{}' must be a numeric project id.",
+                resolved_id
+            ))
+        })?;
+        let token = ctx
+            .settings
+            .gitlab
+            .token
+            .as_deref()
+            .ok_or_else(|| ShipItError::Error("GitLab token is required to create a tag.".to_string()))?;
+        create_gitlab_tag(
+            &ctx.settings.gitlab.domain,
+            token,
+            project_id,
+            tag_name,
+            branch,
+            notes,
+        )
+        .await
+        .map_err(|e| ShipItError::Error(format!("Failed to create a GitLab tag: {}", e)))
+    } else {
+        Err(ShipItError::Error(
+            "Could not determine platform from remote url. Ensure the remote url contains 'github' or 'gitlab'.".to_string(),
+        ))
     }
 }
