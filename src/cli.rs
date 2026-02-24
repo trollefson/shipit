@@ -34,7 +34,7 @@ pub struct B2bArgs {
         long,
         help = "Print the merge/pull request details without creating it"
     )]
-    pub dryrun: bool,
+    pub dry_run: bool,
     #[arg(
         long,
         help = "Path to the git repository (defaults to current directory)"
@@ -77,7 +77,7 @@ pub struct B2tArgs {
     )]
     pub agent: Option<Agent>,
     #[arg(long, help = "Print the tag notes without creating it")]
-    pub dryrun: bool,
+    pub dry_run: bool,
     #[arg(
         long,
         help = "Path to the git repository (defaults to current directory)"

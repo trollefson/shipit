@@ -16,7 +16,7 @@ impl Context {
                         Agent::Shipit => "shipit".to_string(),
                     };
                 }
-                settings.shipit.dryrun = args.dryrun;
+                settings.shipit.dryrun = args.dry_run;
             }
             Commands::B2t(args) => {
                 if let Some(selected) = &args.agent {
@@ -25,7 +25,7 @@ impl Context {
                         Agent::Shipit => "shipit".to_string(),
                     };
                 }
-                settings.shipit.dryrun = args.dryrun;
+                settings.shipit.dryrun = args.dry_run;
             }
             Commands::Config { .. } => {}
         }

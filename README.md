@@ -57,7 +57,7 @@ shipit config generate
 shipit config show
 
 # 3. Ship it from the root of your project. See the command docs below for more options
-shipit b2b develop main --dryrun
+shipit b2b develop main --dry-run
 ```
 
 ---
@@ -82,7 +82,7 @@ shipit b2b <source> <target> [--agent <agent>] [--dryrun] [--dir <path>] [--id <
 | `source`                          | Branch with new commits (e.g. `develop`) |
 | `target`                          | Destination branch (e.g. `main`) |
 | `--agent <agent>`                 | Agent to use for generating the merge/pull request description (`ollama`, `shipit`) |
-| `--dryrun`                        | Preview the merge request description without creating it |
+| `--dry-run`                       | Preview the merge request description without creating it |
 | `--dir <path>`                    | Path to the git repository (defaults to current directory) |
 | `--id <identifier>`               | Project identifier — `owner/repo` for GitHub, numeric id for GitLab (auto-detected from remote url if omitted) |
 | `--remote <name>`                 | Git remote to detect platform from (defaults to `origin`) |
@@ -109,7 +109,7 @@ shipit b2b develop main --agent ollama
 shipit b2b develop main --agent shipit
 
 # Preview the description without creating the request
-shipit b2b develop main --agent shipit --dryrun
+shipit b2b develop main --agent shipit --dry-run
 
 # Explicitly specify the project identifier
 shipit b2b develop main --id owner/repo
