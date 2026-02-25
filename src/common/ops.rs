@@ -207,7 +207,7 @@ pub(crate) async fn suggest_title(
     };
 
     let version = next_version(&categorized, &latest_tag)?;
-    Some(format!("Release {}", version))
+    Some(format!("Release Candidate v{}", version))
 }
 
 pub(crate) fn collect_commits(
