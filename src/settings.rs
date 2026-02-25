@@ -29,7 +29,7 @@ pub struct ShipitSettings {
 impl Default for ShipitSettings {
     fn default() -> Self {
         Self {
-            agent: String::new(),
+            agent: "shipit".to_string(),
             commits: "custom".to_string(),
             dryrun: false,
         }
