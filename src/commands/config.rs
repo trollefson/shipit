@@ -22,9 +22,7 @@ pub fn generate() -> Result<(), ShipItError> {
     let mut settings = Settings::default();
 
     println!();
-    println!("{}", "GitHub Personal Access Token (optional)".bold().cyan());
-    println!("  Providing a token now is optional, but one will be required to open pull");
-    println!("  requests or push branches to GitHub.");
+    println!("{}", "GitHub Personal Access Token".bold().cyan());
     println!("  Required token scopes (classic token):");
     println!("    - repo       (push branches and create pull requests)");
     println!("  Required permissions (fine-grained token):");
@@ -42,9 +40,7 @@ pub fn generate() -> Result<(), ShipItError> {
     }
 
     println!();
-    println!("{}", "GitLab Personal Access Token (optional)".bold().cyan());
-    println!("  Providing a token now is optional, but one will be required to open merge");
-    println!("  requests or push branches to GitLab.");
+    println!("{}", "GitLab Personal Access Token".bold().cyan());
     println!("  Required token scopes:");
     println!("    - api        (create / update merge requests)");
     println!("    - write_repository  (push branches)");
@@ -66,7 +62,11 @@ pub fn generate() -> Result<(), ShipItError> {
     let path = confy::get_configuration_file_path("shipit", None)
         .map_err(|e| ShipItError::Error(format!("Failed to resolve config path: {}", e)))?;
 
-    println!("{} Config written to: {}", "✓".green().bold(), path.display().bold());
+    println!(
+        "{} Config written to: {}",
+        "✓".green().bold(),
+        path.display().bold()
+    );
     Ok(())
 }
 

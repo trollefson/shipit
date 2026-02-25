@@ -54,7 +54,7 @@ pub struct B2bArgs {
     pub prompt: Option<String>,
     #[arg(
         long,
-        help = "Title to use for the merge/pull request (defaults to '<source> to <target>')"
+        help = "Title to use for the merge/pull request (defaults to 'source to target')"
     )]
     pub title: Option<String>,
     #[arg(
@@ -62,10 +62,7 @@ pub struct B2bArgs {
         help = "Description to use for the merge/pull request (skips commit discovery and ai summary)"
     )]
     pub description: Option<String>,
-    #[arg(
-        long,
-        help = "Only include merge commits in the discovered commits"
-    )]
+    #[arg(long, help = "Only include merge commits in the discovered commits")]
     pub only_merges: bool,
 }
 
@@ -105,10 +102,7 @@ pub struct B2tArgs {
         help = "Description to use for the tag notes (skips commit discovery and ai summary)"
     )]
     pub description: Option<String>,
-    #[arg(
-        long,
-        help = "Only include merge commits in the discovered commits"
-    )]
+    #[arg(long, help = "Only include merge commits in the discovered commits")]
     pub only_merges: bool,
     #[arg(
         long,
@@ -119,9 +113,11 @@ pub struct B2tArgs {
 
 #[derive(Parser)]
 #[command(styles = styles())]
+#[command(subcommand_required = false)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
     #[arg(
         short = 'v',
         long,
@@ -130,6 +126,8 @@ pub struct Cli {
         help = "Increase log verbosity (-v for info, -vv for debug)"
     )]
     pub verbose: u8,
+    #[arg(long, hide = true)]
+    pub markdown_help: bool,
 }
 
 #[derive(Args, Debug, Default)]
@@ -139,10 +137,7 @@ pub struct T2rArgs {
         help = "Tag to create the release for (defaults to the latest tag on the platform)"
     )]
     pub tag: Option<String>,
-    #[arg(
-        long,
-        help = "Print the release details without creating it"
-    )]
+    #[arg(long, help = "Print the release details without creating it")]
     pub dry_run: bool,
     #[arg(
         long,

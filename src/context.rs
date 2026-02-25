@@ -9,7 +9,7 @@ impl Context {
     pub fn from_cli(args: &Cli) -> Result<Self, Box<dyn std::error::Error>> {
         let mut settings: Settings = confy::load("shipit", None)?;
         match &args.command {
-            Commands::B2b(args) => {
+            Some(Commands::B2b(args)) => {
                 if let Some(selected) = &args.agent {
                     settings.shipit.agent = match selected {
                         Agent::Ollama => "ollama".to_string(),
@@ -18,7 +18,7 @@ impl Context {
                 }
                 settings.shipit.dryrun = args.dry_run;
             }
-            Commands::B2t(args) => {
+            Some(Commands::B2t(args)) => {
                 if let Some(selected) = &args.agent {
                     settings.shipit.agent = match selected {
                         Agent::Ollama => "ollama".to_string(),
@@ -27,10 +27,11 @@ impl Context {
                 }
                 settings.shipit.dryrun = args.dry_run;
             }
-            Commands::T2r(args) => {
+            Some(Commands::T2r(args)) => {
                 settings.shipit.dryrun = args.dry_run;
             }
-            Commands::Config { .. } => {}
+            Some(Commands::Config { .. }) => {}
+            None => {}
         }
         Ok(Self { settings })
     }
