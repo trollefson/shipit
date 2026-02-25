@@ -24,6 +24,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 owo-colors = "4"
 regex = "1"
 clap-markdown = "0.1.5"
+chrono = "0.4"
 
 [dev-dependencies]
 wiremock = "0.6"
