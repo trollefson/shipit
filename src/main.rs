@@ -38,7 +38,7 @@ async fn main() -> Result<(), ShipItError> {
     // Handle commands related to config generation and reading first
     if let Some(cli::Commands::Config { subcommand }) = args.command {
         return match subcommand {
-            cli::ConfigCommands::Generate => commands::config::generate(),
+            cli::ConfigCommands::Generate(args) => commands::config::generate(args),
             cli::ConfigCommands::Show => commands::config::show(),
         };
     }

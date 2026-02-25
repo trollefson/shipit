@@ -168,10 +168,22 @@ pub enum Commands {
     },
 }
 
+#[derive(Args, Debug, Default)]
+pub struct ConfigGenerateArgs {
+    #[arg(long, help = "GitHub personal access token")]
+    pub github_token: Option<String>,
+    #[arg(long, help = "GitHub domain (defaults to github.com)")]
+    pub github_domain: Option<String>,
+    #[arg(long, help = "GitLab personal access token")]
+    pub gitlab_token: Option<String>,
+    #[arg(long, help = "GitLab domain (defaults to gitlab.com)")]
+    pub gitlab_domain: Option<String>,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum ConfigCommands {
     /// Write the default config to the platform config directory (overwrites existing config)
-    Generate,
+    Generate(ConfigGenerateArgs),
     /// Print the current config and its file path
     Show,
 }

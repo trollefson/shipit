@@ -1,15 +1,13 @@
-use std::io::{self, Write};
+use std::io;
 
 use owo_colors::OwoColorize;
 
+use crate::cli::ConfigGenerateArgs;
 use crate::error::ShipItError;
 use crate::settings::Settings;
 
-fn prompt_token(msg: &str) -> Result<String, ShipItError> {
-    print!("{}", msg);
-    io::stdout()
-        .flush()
-        .map_err(|e| ShipItError::Error(format!("Failed to flush stdout: {}", e)))?;
+fn prompt_token(label: &str) -> Result<String, ShipItError> {
+    crate::output::print_token_prompt(label);
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
@@ -18,41 +16,61 @@ fn prompt_token(msg: &str) -> Result<String, ShipItError> {
 }
 
 /// Write the default config to the platform config directory. This will overwrite existing config.
-pub fn generate() -> Result<(), ShipItError> {
+pub fn generate(args: ConfigGenerateArgs) -> Result<(), ShipItError> {
     let mut settings = Settings::default();
 
+    // --- GitHub ---
     println!();
     println!("{}", "GitHub Personal Access Token".bold().cyan());
-    println!("  Required token scopes (classic token):");
-    println!("    - repo       (push branches and create pull requests)");
-    println!("  Required permissions (fine-grained token):");
-    println!("    - Contents: Read and write  (push branches)");
-    println!("    - Pull requests: Read and write  (create pull requests)");
-    println!();
 
-    let github_token = prompt_token("  GitHub token (leave blank to skip): ")?;
+    let github_token = if let Some(token) = args.github_token {
+        token
+    } else {
+        crate::output::print_token_scope_label("Required token scopes (classic token)");
+        crate::output::print_token_scope_item("repo", "(push branches, create tags, releases, and pull requests)");
+        crate::output::print_token_scope_label("Required permissions (fine-grained token)");
+        crate::output::print_token_scope_item("Contents: Read and write", "(push branches, create tags and releases)");
+        crate::output::print_token_scope_item("Pull requests: Read and write", "(create pull requests)");
+        println!();
+        prompt_token("GitHub token (leave blank to skip):")?
+    };
 
     if !github_token.trim().is_empty() {
         settings.github.token = Some(github_token.trim().to_string());
-        println!("  {} GitHub token saved.", "✓".green().bold());
+        crate::output::print_success("GitHub token saved.");
     } else {
-        println!("  {}", "GitHub token skipped.".dimmed());
+        crate::output::print_skipped("GitHub token skipped.");
     }
 
+    if let Some(domain) = args.github_domain {
+        settings.github.domain = domain;
+        crate::output::print_success("GitHub domain saved.");
+    }
+
+    // --- GitLab ---
     println!();
     println!("{}", "GitLab Personal Access Token".bold().cyan());
-    println!("  Required token scopes:");
-    println!("    - api        (create / update merge requests)");
-    println!("    - write_repository  (push branches)");
-    println!();
 
-    let gitlab_token = prompt_token("  GitLab token (leave blank to skip): ")?;
+    let gitlab_token = if let Some(token) = args.gitlab_token {
+        token
+    } else {
+        crate::output::print_token_scope_label("Required token scopes");
+        crate::output::print_token_scope_item("api", "(create / update merge requests, tags and releases)");
+        crate::output::print_token_scope_item("write_repository", "(push branches)");
+        println!();
+        prompt_token("GitLab token (leave blank to skip):")?
+    };
 
     if !gitlab_token.trim().is_empty() {
         settings.gitlab.token = Some(gitlab_token.trim().to_string());
-        println!("  {} GitLab token saved.", "✓".green().bold());
+        crate::output::print_success("GitLab token saved.");
     } else {
-        println!("  {}", "GitLab token skipped.".dimmed());
+        crate::output::print_skipped("GitLab token skipped.");
+    }
+
+    if let Some(domain) = args.gitlab_domain {
+        settings.gitlab.domain = domain;
+        crate::output::print_success("GitLab domain saved.");
     }
 
     println!();
@@ -62,11 +80,7 @@ pub fn generate() -> Result<(), ShipItError> {
     let path = confy::get_configuration_file_path("shipit", None)
         .map_err(|e| ShipItError::Error(format!("Failed to resolve config path: {}", e)))?;
 
-    println!(
-        "{} Config written to: {}",
-        "✓".green().bold(),
-        path.display().bold()
-    );
+    crate::output::print_success(&format!("Config written to: {}", path.display().bold()));
     Ok(())
 }
 
