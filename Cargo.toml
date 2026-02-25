@@ -1,6 +1,6 @@
 [package]
 name = "shipit"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 description = "A CLI for managing git releases"
@@ -19,6 +19,12 @@ toml = "1.0.3"
 confy = "2.0.0"
 octocrab = "0.41"
 indicatif = "0.17"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+owo-colors = "4"
+regex = "1"
+clap-markdown = "0.1.5"
+chrono = "0.4"
 
 [dev-dependencies]
 wiremock = "0.6"

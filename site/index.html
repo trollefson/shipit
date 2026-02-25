@@ -66,18 +66,42 @@
             box-shadow: 0 10px 40px rgba(0,0,0,0.4), 0 0 60px rgba(0, 200, 255, 0.04);
         }
         h1 { margin-top: 0; font-weight: 700; font-size: 2rem; color: #e6edf3; }
+        @property --border-angle {
+            syntax: '<angle>';
+            initial-value: 0deg;
+            inherits: false;
+        }
+
+        @keyframes neon-border-rotate {
+            to { --border-angle: 360deg; }
+        }
+
         .download-card {
             border: 2px solid var(--border);
             border-radius: 12px;
             padding: 30px;
             margin: 25px 0;
             transition: all 0.3s ease;
+            position: relative;
         }
         .highlight {
-            border-color: var(--primary);
-            background: rgba(0, 200, 255, 0.04);
+            border: 2px solid transparent;
+            background-image:
+                linear-gradient(var(--surface), var(--surface)),
+                conic-gradient(
+                    from var(--border-angle),
+                    rgba(0, 200, 255, 0.15) 0deg,
+                    rgba(0, 200, 255, 0.15) 300deg,
+                    rgba(0, 200, 255, 0.5)  330deg,
+                    #00c8ff                 350deg,
+                    #ccf0ff                 357deg,
+                    #00c8ff                 360deg
+                );
+            background-origin: border-box;
+            background-clip: padding-box, border-box;
             transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(0, 200, 255, 0.12), 0 0 0 1px rgba(0, 200, 255, 0.1);
+            box-shadow: 0 4px 20px rgba(0, 200, 255, 0.12), 0 0 22px rgba(0, 200, 255, 0.22);
+            animation: neon-border-rotate 4s linear infinite;
         }
         .btn {
             display: inline-block;
@@ -139,38 +163,19 @@
         .other-links { margin-top: 30px; font-size: 0.85em; color: var(--text-muted); line-height: 2; }
         .other-links a { color: var(--accent); text-decoration: underline; margin: 0 5px; }
 
-        /* Buy Me a Coffee Section */
-        .coffee-section {
+        /* Source Links Section */
+        .source-links {
             margin-top: 50px;
             padding-top: 30px;
             border-top: 1px solid var(--border);
-        }
-        .bmc-button {
-            display: inline-flex;
-            align-items: center;
-            background-color: var(--coffee);
-            color: #000000;
-            padding: 10px 20px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: bold;
-            font-family: 'Inter', sans-serif;
-            transition: transform 0.2s;
-        }
-        .bmc-button:hover { transform: scale(1.03); }
-        .bmc-button img { width: 25px; margin-right: 10px; }
-
-        /* Source Links Section */
-        .source-links {
-            margin-top: 20px;
-            display: flex;
-            justify-content: center;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 12px;
-            flex-wrap: wrap;
         }
         .source-btn {
-            display: inline-flex;
+            display: flex;
             align-items: center;
+            justify-content: center;
             gap: 8px;
             background-color: var(--surface2);
             color: var(--text);
@@ -192,6 +197,23 @@
             height: 20px;
             fill: currentColor;
             flex-shrink: 0;
+        }
+        .source-btn img {
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+        .source-btn.coffee-btn {
+            background-color: var(--primary);
+            color: #0d1117;
+            border-color: var(--primary);
+            box-shadow: 0 0 16px rgba(0, 200, 255, 0.4);
+        }
+        .source-btn.coffee-btn:hover {
+            filter: brightness(1.1);
+            color: #0d1117;
+            border-color: var(--primary);
+            box-shadow: 0 0 22px rgba(0, 200, 255, 0.6);
         }
     </style>
 </head>
@@ -218,15 +240,11 @@
             <a href="https://github.com/trollefson/shipit/releases">All releases on GitHub</a>
         </div>
 
-        <div class="coffee-section">
-            <p style="font-size: 0.9rem; margin-bottom: 15px; color: var(--text-muted);">Enjoying shipit?</p>
-            <a class="bmc-button" target="_blank" href="https://buymeacoffee.com/trollefson">
-                <img src="https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg" alt="Buy me a coffee">
-                <span>Buy me a coffee</span>
-            </a>
-        </div>
-
         <div class="source-links">
+            <a class="source-btn coffee-btn" href="https://buymeacoffee.com/trollefson" target="_blank" rel="noopener">
+                <img src="https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg" alt="">
+                Buy me a coffee
+            </a>
             <a class="source-btn" href="https://github.com/trollefson/shipit" target="_blank" rel="noopener">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
@@ -238,6 +256,12 @@
                     <path d="M239.108 10.689 32.341 128.347a32 32 0 0 0-16 27.713v200.627a32 32 0 0 0 16.136 27.77L239.244 501.44a32 32 0 0 0 31.728.072l208-116.5a32 32 0 0 0 16.328-27.84V156.06a32 32 0 0 0-15.872-27.641L271.108 10.76a32 32 0 0 0-32 .072zm106.154 134.809L256 197.621l-89.262-52.123L256 93.375zm-202.95 36.37L234.5 232.5v112.127L142.312 292zm226.476 112.254V232.5l92.188-51.632v112.127z"/>
                 </svg>
                 crates.io
+            </a>
+            <a class="source-btn" href="https://docs.rs/shipit" target="_blank" rel="noopener">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z"/>
+                </svg>
+                docs.rs
             </a>
         </div>
     </div>
