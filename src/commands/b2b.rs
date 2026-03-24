@@ -76,7 +76,7 @@ pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2bPlanArgs, path:
        let latest_tag = tethered_git.get_latest_tag()?;
        let version = next_version(&categorized, &latest_tag)
            .ok_or_else(|| ShipItError::Error(format!("Could not compute next version from tag '{}'", latest_tag)))?;
-       let suggested = format!("Release Candidate v{}", version);
+       let suggested = format!("Release Candidate {}", version);
        if args.yes {
            suggested
        } else {

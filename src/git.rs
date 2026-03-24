@@ -20,7 +20,7 @@ use crate::error::ShipItError;
 ///   - any other non-empty category (`infrastructure`, `docs`, `misc`) - **patch** bump
 ///   - nothing            - version unchanged
 ///
-/// Always returns a bare `"MAJOR.MINOR.PATCH"` string, or `None` if no
+/// Always returns a `"vMAJOR.MINOR.PATCH"` string, or `None` if no
 /// `MAJOR.MINOR.PATCH` digits can be found in `current`.
 pub(crate) fn next_version(
     commits: &HashMap<String, Vec<String>>,
@@ -42,7 +42,7 @@ pub(crate) fn next_version(
         (minor, patch)
     };
 
-    Some(format!("{}.{}.{}", major, new_minor, new_patch))
+    Some(format!("v{}.{}.{}", major, new_minor, new_patch))
 }
 
 /// Abstraction over the git hosting platform used by command functions.
@@ -1057,31 +1057,31 @@ mod tests {
     #[test]
     fn test_next_version_feature_bumps_minor_resets_patch() {
         let map = categorize_commits(&["feat: new thing"]);
-        assert_eq!(next_version(&map, "v1.2.3"), Some("1.3.0".to_string()));
+        assert_eq!(next_version(&map, "v1.2.3"), Some("v1.3.0".to_string()));
     }
 
     #[test]
     fn test_next_version_bug_fix_bumps_patch() {
         let map = categorize_commits(&["fix: crash"]);
-        assert_eq!(next_version(&map, "v1.2.3"), Some("1.2.4".to_string()));
+        assert_eq!(next_version(&map, "v1.2.3"), Some("v1.2.4".to_string()));
     }
 
     #[test]
     fn test_next_version_infrastructure_bumps_patch() {
         let map = categorize_commits(&["ci: update pipeline"]);
-        assert_eq!(next_version(&map, "v1.2.3"), Some("1.2.4".to_string()));
+        assert_eq!(next_version(&map, "v1.2.3"), Some("v1.2.4".to_string()));
     }
 
     #[test]
     fn test_next_version_no_commits_unchanged() {
         let map = categorize_commits(&[]);
-        assert_eq!(next_version(&map, "v1.2.3"), Some("1.2.3".to_string()));
+        assert_eq!(next_version(&map, "v1.2.3"), Some("v1.2.3".to_string()));
     }
 
     #[test]
     fn test_next_version_feature_beats_bug_fix() {
         let map = categorize_commits(&["feat: something", "fix: crash"]);
-        assert_eq!(next_version(&map, "v2.1.5"), Some("2.2.0".to_string()));
+        assert_eq!(next_version(&map, "v2.1.5"), Some("v2.2.0".to_string()));
     }
 
     #[test]
@@ -1093,6 +1093,6 @@ mod tests {
     #[test]
     fn test_next_version_ignores_v_prefix() {
         let map = categorize_commits(&["fix: patch"]);
-        assert_eq!(next_version(&map, "version 0.9.1"), Some("0.9.2".to_string()));
+        assert_eq!(next_version(&map, "version 0.9.1"), Some("v0.9.2".to_string()));
     }
 }
