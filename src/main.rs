@@ -1,9 +1,10 @@
 mod cli;
 mod commands;
-mod common;
 mod context;
 mod error;
+mod git;
 mod output;
+mod plan;
 mod settings;
 
 use clap::Parser;
@@ -35,26 +36,21 @@ async fn main() -> Result<(), ShipItError> {
     }
     init_tracing(args.verbose);
 
-    // Handle commands related to config generation and reading first
-    if let Some(cli::Commands::Config { subcommand }) = args.command {
-        return match subcommand {
-            cli::ConfigCommands::Generate(args) => commands::config::generate(args),
-            cli::ConfigCommands::Show => commands::config::show(),
-        };
+    if let Some(cli::Commands::Init(args)) = args.command {
+        return commands::config::init(args);
     }
 
-    let ctx = Context::from_cli(&args).map_err(|_e| ShipItError::Error("Failed to parse CLI context!".to_string()))?;
+    let ctx = Context::from_cli(&args).map_err(|e| ShipItError::Error(e.to_string()))?;
     match args.command {
-        Some(cli::Commands::B2b(args)) => {
-            commands::b2b::branch_to_branch(&ctx, args).await?;
-        }
-        Some(cli::Commands::B2t(args)) => {
-            commands::b2t::branch_to_tag(&ctx, args).await?;
-        }
-        Some(cli::Commands::T2r(args)) => {
-            commands::t2r::tag_to_release(&ctx, args).await?;
-        }
-        Some(cli::Commands::Config { .. }) => unreachable!(),
+        Some(cli::Commands::B2b(b2b)) => match b2b.command {
+            cli::B2bSubcommand::Plan(args) => commands::b2b::plan(&ctx, args).await?,
+            cli::B2bSubcommand::Apply(args) => commands::b2b::apply(&ctx, args).await?,
+        },
+        Some(cli::Commands::B2t(b2t)) => match b2t.command {
+            cli::B2tSubcommand::Plan(args) => commands::b2t::plan(&ctx, args).await?,
+            cli::B2tSubcommand::Apply(args) => commands::b2t::apply(&ctx, args).await?,
+        },
+        Some(cli::Commands::Init(_)) => unreachable!(),
         None => {}
     }
     Ok(())
