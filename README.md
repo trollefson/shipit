@@ -54,14 +54,13 @@ Or grab a pre-built binary from the [releases page](https://github.com/trollefso
 
 ---
 
-## Quick start
+## AI-native workflow
+
+Shipit integrates with your favorite agentic coding assistant. Install shipit, then just ask your agent to create a merge request — it will follow the instructions in [AI.md](AI.md) automatically.
 
 ```bash
-# 1. Generate a config file at the platform default location
-shipit init
-
-# 2. Ship it from the root of your project. See the command docs below for more options
-shipit b2b develop main
+# Install shipit, then ask your agent:
+"Create a merge request with shipit"
 ```
 
 ---
