@@ -132,8 +132,7 @@ shipit b2t plan main --conventional-commits -y
 **Agent-provided tag name and notes:**
 
 ```bash
-shipit b2t plan main \
-  --tag v1.2.3 \
+shipit b2t plan main v1.2.3 \
   --description "$(cat <<'EOF'
 ## What's Changed
 - New payment integration (#42)
@@ -253,12 +252,15 @@ structured description before calling `plan` again with `--description`.
 | `--remote <name>` | Git remote name (default: `origin`) |
 | `--dir <path>` | Repository root (default: cwd) |
 
-### `shipit b2t plan <branch>`
+### `shipit b2t plan <branch> [tag]`
+
+| Argument | Description |
+|---|---|
+| `[tag]` | Tag name to create (default: next semantic version derived from commits) |
 
 | Flag | Short | Description |
 |---|---|---|
 | `--conventional-commits` | `-c` | Group notes by commit type |
-| `--tag <name>` | | Override the suggested tag name |
 | `--description <text>` | | Override the auto-generated tag notes |
 | `--latest-tag <name>` | | Compare against a specific tag instead of auto-detecting |
 | `--only-merges` | | Restrict commit collection to merge commits |

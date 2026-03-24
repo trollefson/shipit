@@ -118,7 +118,10 @@ impl TetheredGit {
         };
 
         // use the remote URL to detect and construct the git platform
-        let platform = GitPlatform::new(&remote_url, domain, token, &repo_path).await?;
+        let sp = crate::output::start_spinner("Connecting to platform...");
+        let platform_result = GitPlatform::new(&remote_url, domain, token, &repo_path).await;
+        sp.finish_and_clear();
+        let platform = platform_result?;
 
         // verify the branch exists locally
         let branch = repo.find_branch(source, git2::BranchType::Local)
@@ -141,11 +144,14 @@ impl TetheredGit {
     /// Fetch failures are intentionally soft-ignored by [`refresh`] so an offline run still works.
     fn fetch(&self) -> Result<(), ShipItError> {
         tracing::info!("Fetching {} from {}", self.source, self.remote_name);
+        let sp = crate::output::start_spinner(format!("Fetching {}...", self.source).as_str());
         let output = std::process::Command::new("git")
             .args(["fetch", &self.remote_name, &self.source])
             .current_dir(&self.path)
             .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git fetch: {}", e)))?;
+            .map_err(|e| ShipItError::Error(format!("Failed to run git fetch: {}", e)));
+        sp.finish_and_clear();
+        let output = output?;
 
         if !output.status.success() {
             return Err(ShipItError::Error(format!(
@@ -164,7 +170,6 @@ impl TetheredGit {
         let _ = self.fetch();
 
         if self.is_dirty()? && !allow_dirty && !yes {
-            tracing::warn!("Working directory has uncommitted changes. Unsafe to continue!");
             return Err(ShipItError::Error("Working directory has uncommitted changes. Unsafe to continue! Clean up your uncommitted changes or add the --allow-dirty flag.".to_string()));
         }
 
@@ -175,7 +180,7 @@ impl TetheredGit {
             if confirmed {
                 self.push_branch()?;
             } else {
-                return Err(ShipItError::Error("Aborted: push your local branch before continuing.".to_string()));
+                return Err(ShipItError::Error("Aborted: Local source branch is ahead of remote!".to_string()));
             }
         }
 
@@ -195,11 +200,14 @@ impl TetheredGit {
 
     /// Pushes `self.source` to `self.remote_name`.
     fn push_branch(&self) -> Result<(), ShipItError> {
+        let sp = crate::output::start_spinner(format!("Pushing {}...", self.source).as_str());
         let output = std::process::Command::new("git")
             .args(["push", &self.remote_name, &self.source])
             .current_dir(&self.path)
             .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git push: {}", e)))?;
+            .map_err(|e| ShipItError::Error(format!("Failed to run git push: {}", e)));
+        sp.finish_and_clear();
+        let output = output?;
         if !output.status.success() {
             return Err(ShipItError::Error(format!(
                 "git push failed: {}",
@@ -211,11 +219,14 @@ impl TetheredGit {
 
     /// Pulls `self.source` from `self.remote_name`.
     fn pull_branch(&self) -> Result<(), ShipItError> {
+        let sp = crate::output::start_spinner(format!("Pulling {}...", self.source).as_str());
         let output = std::process::Command::new("git")
             .args(["pull", &self.remote_name, &self.source])
             .current_dir(&self.path)
             .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git pull: {}", e)))?;
+            .map_err(|e| ShipItError::Error(format!("Failed to run git pull: {}", e)));
+        sp.finish_and_clear();
+        let output = output?;
         if !output.status.success() {
             return Err(ShipItError::Error(format!(
                 "git pull failed: {}",
@@ -401,11 +412,14 @@ impl TetheredGit {
     pub(crate) fn push_tag(&self, tag_name: &str) -> Result<(), ShipItError> {
         tracing::info!("Pushing tag {} to {}", tag_name, self.remote_name);
         let refspec = format!("refs/tags/{}", tag_name);
+        let sp = crate::output::start_spinner(format!("Pushing tag {}...", tag_name).as_str());
         let output = std::process::Command::new("git")
             .args(["push", &self.remote_name, &refspec])
             .current_dir(&self.path)
             .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git push: {}", e)))?;
+            .map_err(|e| ShipItError::Error(format!("Failed to run git push: {}", e)));
+        sp.finish_and_clear();
+        let output = output?;
 
         if !output.status.success() {
             return Err(ShipItError::Error(format!(

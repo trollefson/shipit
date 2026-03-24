@@ -21,9 +21,26 @@ pub fn build_plan_yaml<T: serde::Serialize>(plan: &T, filename: &str) -> Result<
         .map_err(|e| ShipItError::Error(format!("Failed to serialize plan: {}", e)))
 }
 
-/// Print the AI-generated content (PR description, tag notes) with a styled header.
+/// Start an indeterminate spinner on stderr with the given message.
+///
+/// Call [`indicatif::ProgressBar::finish_and_clear`] on the returned handle when the
+/// operation completes so the spinner line is erased before the next output.
+pub fn start_spinner(msg: &str) -> indicatif::ProgressBar {
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.set_style(
+        indicatif::ProgressStyle::with_template("{spinner:.cyan} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    pb.set_message(msg.to_string());
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb
+}
+
+/// Print content (PR description, tag notes) with a styled header.
 pub fn print_content(header: &str, body: &str) {
-    eprintln!("{}\n\n{}", header.bold(), body);
+    let rule = "─".repeat(60);
+    eprintln!("\n{}\n{}\n\n{}\n\n{}", header.bold().cyan(), rule.dimmed(), body.trim_end(), rule.dimmed());
 }
 
 /// Print a final resource URL after a successful remote action.
@@ -33,12 +50,12 @@ pub fn print_url(url: &str) {
 
 /// Print the path to a saved plan file.
 pub fn print_plan_saved(path: &std::path::Path) {
-    eprintln!("{} Plan saved to: {}", "✓".green().bold(), path.display().bold());
+    eprintln!("{} Plan saved to: {}", "✓".bright_green().bold(), path.display().bold());
 }
 
 /// Print a success confirmation line with a green checkmark.
 pub fn print_success(msg: &str) {
-    println!("{} {}", "✓".green().bold(), msg);
+    println!("{} {}", "✓".bright_green().bold(), msg);
 }
 
 /// Print a dimmed notice for a skipped or no-op action.
@@ -57,7 +74,7 @@ pub fn print_token_prompt(label: &str) {
 /// the response. Returns the entered string, or the suggestion if the user presses Enter.
 pub fn prompt_mr_title(suggested: &str) -> std::io::Result<String> {
     use std::io::Write;
-    eprint!("\n\nMerge request title [{}]: ", suggested);
+    eprint!("\n\n{} {} ", "Merge request title".bold().cyan(), format!("[{}]:", suggested).dimmed());
     std::io::stderr().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;

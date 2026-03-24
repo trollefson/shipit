@@ -1,6 +1,6 @@
 [package]
 name = "shipit"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 license = "MIT"
 description = "A CLI for managing git releases"
@@ -24,6 +24,7 @@ clap-markdown = "0.1.5"
 chrono = "0.4"
 serde_yaml = "0.9"
 async-trait = "0.1"
+indicatif = "0.17"
 
 [dev-dependencies]
 wiremock = "0.6"

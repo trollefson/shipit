@@ -16,6 +16,12 @@
 
 ---
 
+## Demo
+
+![Shipit demo](site/demo.gif)
+
+---
+
 ## Installation
 
 ### Install Script (macOS/Linux/Windows)
@@ -55,14 +61,8 @@ Or grab a pre-built binary from the [releases page](https://github.com/trollefso
 shipit init
 
 # 2. Ship it from the root of your project. See the command docs below for more options
-shipit b2b develop main --dry-run
+shipit b2b develop main
 ```
-
----
-
-## Optional Setup
-
-- [Ollama](https://ollama.com) running locally with the model that matches your config is required for usage with the `--agent ollama` option
 
 ---
 
