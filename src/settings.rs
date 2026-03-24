@@ -1,29 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Settings {
     pub shipit: ShipitSettings,
     pub ollama: OllamaSettings,
-    pub gitlab: GitlabSettings,
-    pub github: GithubSettings,
+    pub platform: PlatformSettings,
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            shipit: ShipitSettings::default(),
-            ollama: OllamaSettings::default(),
-            gitlab: GitlabSettings::default(),
-            github: GithubSettings::default(),
-        }
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShipitSettings {
     pub agent: String,
     pub commits: String,
-    pub dryrun: bool,
 }
 
 impl Default for ShipitSettings {
@@ -31,7 +20,6 @@ impl Default for ShipitSettings {
         Self {
             agent: "shipit".to_string(),
             commits: "custom".to_string(),
-            dryrun: false,
         }
     }
 }
@@ -77,31 +65,9 @@ impl Default for OllamaOptions {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GitlabSettings {
+#[derive(Default)]
+pub struct PlatformSettings {
     pub domain: String,
-    pub token: Option<String>,
+    pub token: String,
 }
 
-impl Default for GitlabSettings {
-    fn default() -> Self {
-        Self {
-            domain: "gitlab.com".to_string(),
-            token: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GithubSettings {
-    pub domain: String,
-    pub token: Option<String>,
-}
-
-impl Default for GithubSettings {
-    fn default() -> Self {
-        Self {
-            domain: "github.com".to_string(),
-            token: None,
-        }
-    }
-}

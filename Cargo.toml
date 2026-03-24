@@ -1,6 +1,6 @@
 [package]
 name = "shipit"
-version = "0.5.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 description = "A CLI for managing git releases"
@@ -10,22 +10,22 @@ authors = ["Tanner Rollefson"]
 [dependencies]
 clap = { version = "4.5.55", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
 serde_json = "1.0"
 git2 = "0.20.4"
 gitlab = "0.1808.0"
 serde = { version = "1.0.228", features = ["derive"] }
-toml = "1.0.3"
 confy = "2.0.0"
 octocrab = "0.41"
-indicatif = "0.17"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 owo-colors = "4"
 regex = "1"
 clap-markdown = "0.1.5"
 chrono = "0.4"
+serde_yaml = "0.9"
+async-trait = "0.1"
 
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3"
+mockall = "0.13"

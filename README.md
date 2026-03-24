@@ -52,12 +52,9 @@ Or grab a pre-built binary from the [releases page](https://github.com/trollefso
 
 ```bash
 # 1. Generate a config file at the platform default location
-shipit config generate
+shipit init
 
-# 2. Check the config out and edit settings with your editor
-shipit config show
-
-# 3. Ship it from the root of your project. See the command docs below for more options
+# 2. Ship it from the root of your project. See the command docs below for more options
 shipit b2b develop main --dry-run
 ```
 

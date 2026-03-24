@@ -8,9 +8,7 @@ This document contains the help content for the `shipit` command-line program.
 * [`shipit b2b`↴](#shipit-b2b)
 * [`shipit b2t`↴](#shipit-b2t)
 * [`shipit t2r`↴](#shipit-t2r)
-* [`shipit config`↴](#shipit-config)
-* [`shipit config generate`↴](#shipit-config-generate)
-* [`shipit config show`↴](#shipit-config-show)
+* [`shipit init`↴](#shipit-init)
 
 ## `shipit`
 
@@ -21,7 +19,7 @@ This document contains the help content for the `shipit` command-line program.
 * `b2b` — Open a merge/pull request from a source branch to a target branch
 * `b2t` — Create an annotated tag on a branch with formatted release notes
 * `t2r` — Create a platform release from an existing annotated tag
-* `config` — Manage shipit configuration
+* `init` — Write the default config to the platform config directory (overwrites existing config)
 
 ###### **Options:**
 
@@ -107,32 +105,11 @@ Create a platform release from an existing annotated tag
 
 
 
-## `shipit config`
-
-Manage shipit configuration
-
-**Usage:** `shipit config <COMMAND>`
-
-###### **Subcommands:**
-
-* `generate` — Write the default config to the platform config directory (overwrites existing config)
-* `show` — Print the current config and its file path
-
-
-
-## `shipit config generate`
+## `shipit init`
 
 Write the default config to the platform config directory (overwrites existing config)
 
-**Usage:** `shipit config generate`
-
-
-
-## `shipit config show`
-
-Print the current config and its file path
-
-**Usage:** `shipit config show`
+**Usage:** `shipit init`
 
 
 
