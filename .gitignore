@@ -6,3 +6,5 @@ CLAUDE.md
 # shipit
 shipit.toml
 .shipit/
+site/mock-shipit.sh
+site/demo.tape

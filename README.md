@@ -16,6 +16,12 @@
 
 ---
 
+## Demo
+
+![Shipit demo](site/demo.gif)
+
+---
+
 ## Installation
 
 ### Install Script (macOS/Linux/Windows)

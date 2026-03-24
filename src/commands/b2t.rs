@@ -45,7 +45,9 @@ pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2tPlanArgs, path:
         vec![]
     } else {
         let mut msgs = tethered_git.collect_messages_since_tag(&latest_tag, args.only_merges)?;
+        let sp = crate::output::start_spinner("Enriching commit messages...");
         msgs = tethered_git.platform.enrich_messages(&msgs).await;
+        sp.finish_and_clear();
         msgs
     };
 

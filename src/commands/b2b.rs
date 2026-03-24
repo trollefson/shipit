@@ -40,7 +40,9 @@ pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2bPlanArgs, path:
         vec![]
     } else {
         let mut msgs = tethered_git.collect_messages(&args.target, &args.only_merges)?;
+        let sp = crate::output::start_spinner("Enriching commit messages...");
         msgs = tethered_git.platform.enrich_messages(&msgs).await;
+        sp.finish_and_clear();
         msgs
     };
 
@@ -158,12 +160,15 @@ pub async fn apply(ctx: &Context, args: B2bApplyArgs) -> Result<(), ShipItError>
 /// Calls [`Platform::open_request`] with the source, target, title, and description
 /// from `plan`, then prints the resulting URL.
 pub(crate) async fn run_apply(tethered_git: TetheredGit, plan: crate::plan::Plan) -> Result<(), ShipItError> {
-    let url = tethered_git.platform.open_request(
+    let sp = crate::output::start_spinner("Creating pull request...");
+    let url_result = tethered_git.platform.open_request(
         &plan.source,
         &plan.target,
         &plan.title.value,
         &plan.description.value,
-    ).await?;
+    ).await;
+    sp.finish_and_clear();
+    let url = url_result?;
     crate::output::print_url(&url);
 
     Ok(())
