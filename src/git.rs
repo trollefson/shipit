@@ -448,8 +448,8 @@ impl TetheredGit {
     }
 
     /// Finds the most recent tag reachable from (and an ancestor of) `branch_oid`.
-    pub(crate) fn get_latest_tag(&self) -> Result<String, ShipItError> {
-        let mut best: Option<(i64, String)> = None;
+    pub(crate) fn get_latest_tag(&self) -> Result<Option<String>, ShipItError> {
+        let mut most_recent: Option<(i64, String)> = None;
         let branch = self.repo.revparse_single(&self.source).map_err(ShipItError::Git)?;
 
         let refs = self.repo.references().map_err(ShipItError::Git)?;
@@ -480,21 +480,17 @@ impl TetheredGit {
             };
 
             let seconds = tag_commit.time().seconds();
-            match best {
-                None => best = Some((seconds, name)),
-                Some((best_seconds, _)) if seconds > best_seconds => {
-                    best = Some((seconds, name));
+
+            match most_recent {
+                None => most_recent = Some((seconds, name)),
+                Some((most_recent_seconds, _)) if seconds > most_recent_seconds => {
+                    most_recent = Some((seconds, name));
                 }
                 _ => {}
             }
         }
 
-        best.map(|(_, name)| name).ok_or_else(|| {
-            ShipItError::Error(
-                "No tags found on this branch. Use --latest-tag to specify a tag to compare against."
-                    .to_string(),
-            )
-        })
+        Ok(most_recent.map(|(_, name)| name))
     }
 
 }
