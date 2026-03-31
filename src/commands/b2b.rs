@@ -34,9 +34,7 @@ pub async fn plan(ctx: &Context, args: B2bPlanArgs) -> Result<(), ShipItError> {
 /// When `--conventional-commits` is set the description is grouped by commit type;
 /// otherwise each message becomes a raw bullet-list entry.
 pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2bPlanArgs, path: &Path) -> Result<(), ShipItError> {
-    // Skip commit collection only when both description and title are explicitly provided,
-    // since messages may still be needed for title suggestion even with a custom description.
-    let msgs = if args.description.is_some() && args.title.is_some() {
+    let msgs = if args.description.is_some() {
         vec![]
     } else {
         let mut msgs = tethered_git.collect_messages(&args.target, &args.only_merges)?;
@@ -74,9 +72,12 @@ pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2bPlanArgs, path:
         provided
     } else {
        let latest_tag = tethered_git.get_latest_tag()?;
-       let version = next_version(&categorized, &latest_tag)
-           .ok_or_else(|| ShipItError::Error(format!("Could not compute next version from tag '{}'", latest_tag)))?;
-       let suggested = format!("Release Candidate {}", version);
+       let suggested = if let Some(tag) = latest_tag {
+           let version = next_version(&categorized, &tag).expect("Expected to be able to generate a version using the latest tag!");
+           format!("Release Candidate {}", version)
+       } else {
+           format!("{} to {}", &args.source, &args.target)
+       };
        if args.yes {
            suggested
        } else {
@@ -216,6 +217,41 @@ mod tests {
             },
             commits: vec!["feat: add feature".to_string()],
         }
+    }
+
+    #[tokio::test]
+    async fn test_run_plan_no_tags_no_desc_no_title() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let _oid = make_commit(&repo, "feat: initial commit");
+
+        // Create target branch pointing at initial commit
+        let head = repo.head().unwrap().target().unwrap();
+        repo.branch("main", &repo.find_commit(head).unwrap(), false).unwrap();
+        make_commit(&repo, "feat: add feature");
+
+        let mut mock = MockPlatform::new();
+        mock.expect_enrich_messages()
+            .returning(|msgs| msgs.to_vec());
+
+        let tmp_out = TempDir::new().unwrap();
+        let out_path = tmp_out.path().to_path_buf();
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(mock));
+
+        let args = make_b2b_plan_args("master", "main");
+
+        let result = super::run_plan(tethered, args, &out_path).await;
+        assert!(result.is_ok(), "run_plan failed: {:?}", result);
+
+        let plans_dir = out_path.join(".shipit").join("plans");
+        let entries: Vec<_> = std::fs::read_dir(&plans_dir).unwrap().collect();
+        assert_eq!(entries.len(), 1, "expected one plan file");
+
+        let content = std::fs::read_to_string(entries[0].as_ref().unwrap().path()).unwrap();
+        assert!(content.contains("master to main"));
+        assert!(content.contains("generated_by: default"));
     }
 
     #[tokio::test]
