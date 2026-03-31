@@ -232,4 +232,6 @@ pub struct InitArgs {
     pub platform_token: Option<String>,
     #[arg(long, help = "Platform domain")]
     pub platform_domain: Option<String>,
+    #[arg(long, help = "Git remote to infer the platform domain from [default: origin]")]
+    pub remote: Option<String>,
 }
