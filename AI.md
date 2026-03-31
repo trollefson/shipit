@@ -27,10 +27,27 @@ before anything is published.
 ## Setup
 
 ```bash
-shipit init --platform-token <TOKEN> --platform-domain github.com
+shipit init
 ```
 
 This writes `shipit.toml` and creates `.shipit/plans/`.
+
+Both `--platform-domain` and `--platform-token` are optional — shipit discovers
+sensible defaults automatically:
+
+- **Domain** — inferred from the `origin` remote URL (or the remote named by
+  `--remote`). SSH (`git@github.com:…`) and HTTPS (`https://github.com/…`)
+  formats are both recognised.
+- **Token** — looked up from the environment based on the resolved domain:
+  - GitHub: `GITHUB_TOKEN`, then `GH_TOKEN`
+  - GitLab: `GITLAB_TOKEN`, then `GITLAB_PRIVATE_TOKEN`
+
+When running `shipit init` non-interactively (e.g. in CI or as part of an
+agent workflow), pass the flags explicitly to skip all prompts:
+
+```bash
+shipit init --platform-domain github.com --platform-token "$GITHUB_TOKEN"
+```
 
 ---
 
@@ -228,6 +245,22 @@ structured description before calling `plan` again with `--description`.
 ---
 
 ## Flag Reference
+
+### `shipit init`
+
+| Flag | Description |
+|---|---|
+| `--platform-domain <domain>` | Platform domain (default: inferred from remote URL) |
+| `--platform-token <token>` | Platform personal access token (default: inferred from env — see below) |
+| `--remote <name>` | Git remote to infer the domain from (default: `origin`) |
+| `--dir <path>` | Directory to write config to (default: cwd) |
+
+**Token environment variable lookup order:**
+
+| Platform | Variables checked (in order) |
+|---|---|
+| GitHub | `GITHUB_TOKEN`, `GH_TOKEN` |
+| GitLab | `GITLAB_TOKEN`, `GITLAB_PRIVATE_TOKEN` |
 
 ### `shipit b2b plan <source> <target>`
 

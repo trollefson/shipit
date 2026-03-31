@@ -20,6 +20,92 @@ fn prompt_line(label: &str) -> Result<String, ShipItError> {
     Ok(input.trim().to_string())
 }
 
+fn prompt_line_with_default(label: &str, default: &str) -> Result<String, ShipItError> {
+    crate::output::print_token_prompt(&format!("{} [{}]", label, default));
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    let trimmed = input.trim().to_string();
+    if trimmed.is_empty() {
+        Ok(default.to_string())
+    } else {
+        Ok(trimmed)
+    }
+}
+
+/// Prompt for a secret value whose default comes from an environment variable.
+///
+/// Displays the env var *name* (e.g. `[$GITHUB_TOKEN]`) so the secret is never
+/// echoed to the terminal. Pressing Enter accepts the env var's value; typing
+/// overrides it.
+fn prompt_line_with_env_default(label: &str, env_var_name: &str, env_var_value: &str) -> Result<String, ShipItError> {
+    crate::output::print_token_prompt(&format!("{} [${env_var_name}]", label));
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    let trimmed = input.trim().to_string();
+    if trimmed.is_empty() {
+        Ok(env_var_value.to_string())
+    } else {
+        Ok(trimmed)
+    }
+}
+
+/// Return the first set environment variable for the platform inferred from `domain`.
+///
+/// - GitHub (`github`): checks `GITHUB_TOKEN`, then `GH_TOKEN`
+/// - GitLab (`gitlab`): checks `GITLAB_TOKEN`, then `GITLAB_PRIVATE_TOKEN`
+///
+/// Returns `(variable_name, value)` for the first variable that is set and non-empty,
+/// or `None` if the domain is unrecognised or no variable is set.
+fn token_env_var_for_domain(domain: &str) -> Option<(&'static str, String)> {
+    token_env_var_for_domain_with_lookup(domain, |var| std::env::var(var).ok())
+}
+
+fn token_env_var_for_domain_with_lookup<F>(domain: &str, lookup: F) -> Option<(&'static str, String)>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let candidates: &[&'static str] = if domain.contains("github") {
+        &["GITHUB_TOKEN", "GH_TOKEN"]
+    } else if domain.contains("gitlab") {
+        &["GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN"]
+    } else {
+        return None;
+    };
+
+    candidates.iter().find_map(|&var| {
+        lookup(var).filter(|v| !v.is_empty()).map(|val| (var, val))
+    })
+}
+
+/// Extract the hostname from a git remote URL.
+///
+/// Handles both SSH (`git@host:owner/repo.git`) and HTTPS (`https://host/owner/repo.git`) formats.
+fn domain_from_remote_url(url: &str) -> Option<String> {
+    if url.starts_with("git@") {
+        // git@host:owner/repo.git
+        url.strip_prefix("git@")
+            .and_then(|s| s.split(':').next())
+            .map(|s| s.to_string())
+    } else {
+        // https://host/owner/repo.git
+        url.split_once("//")
+            .and_then(|(_, rest)| rest.split('/').next())
+            .map(|s| s.to_string())
+    }
+}
+
+/// Try to infer the platform domain from the git remote URL.
+fn infer_domain(dir: &std::path::Path, remote: &str) -> Option<String> {
+    let repo = git2::Repository::open(dir).ok()?;
+    let remote_obj = repo.find_remote(remote).ok()?;
+    let url = remote_obj.url()?.to_string();
+    domain_from_remote_url(&url)
+}
+
 /// Write (or update) the shipit agent guide section in `CLAUDE.md`.
 ///
 /// If `CLAUDE.md` already contains a shipit section (delimited by
@@ -91,8 +177,14 @@ pub fn init(args: InitArgs) -> Result<(), ShipItError> {
     eprintln!("  A platform is a remote Git repository service (e.g. GitHub or GitLab).");
     eprintln!("  Only {} and {} are currently supported.", "github.com".bold(), "gitlab.com".bold());
 
+    let remote_name = args.remote.as_deref().unwrap_or("origin");
+    let inferred_domain = infer_domain(&dir, remote_name);
+
     let domain = if let Some(domain) = args.platform_domain {
         domain
+    } else if let Some(ref default) = inferred_domain {
+        eprintln!();
+        prompt_line_with_default("Platform domain:", default)?
     } else {
         eprintln!();
         prompt_line("Platform domain (e.g. github.com):")?
@@ -109,8 +201,14 @@ pub fn init(args: InitArgs) -> Result<(), ShipItError> {
     eprintln!();
     eprintln!("{}", "Platform Personal Access Token".bold().cyan());
 
+    let env_token = token_env_var_for_domain(domain.trim());
+
     let token = if let Some(token) = args.platform_token {
         token
+    } else if let Some((env_var_name, ref env_var_value)) = env_token {
+        eprintln!();
+        eprintln!("  Found token in {}.", format!("${env_var_name}").bold());
+        prompt_line_with_env_default("Platform token:", env_var_name, env_var_value)?
     } else {
         eprintln!();
         prompt_line("Platform token (leave blank to skip):")?
@@ -195,7 +293,7 @@ fn update_gitignore(dir: &std::path::Path) -> Result<(), ShipItError> {
 
 #[cfg(test)]
 mod tests {
-    use super::update_gitignore;
+    use super::{domain_from_remote_url, infer_domain, token_env_var_for_domain_with_lookup, update_gitignore};
     use tempfile::TempDir;
 
     #[test]
@@ -245,5 +343,199 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert_eq!(content.matches("shipit.toml").count(), 1, "shipit.toml should not be duplicated");
         assert!(content.contains(".shipit/"), ".shipit/ should have been added");
+    }
+
+    // --- domain_from_remote_url ---
+
+    #[test]
+    fn test_domain_from_ssh_url() {
+        assert_eq!(
+            domain_from_remote_url("git@github.com:owner/repo.git"),
+            Some("github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_domain_from_ssh_url_gitlab() {
+        assert_eq!(
+            domain_from_remote_url("git@gitlab.com:owner/repo.git"),
+            Some("gitlab.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_domain_from_https_url() {
+        assert_eq!(
+            domain_from_remote_url("https://github.com/owner/repo.git"),
+            Some("github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_domain_from_https_url_gitlab() {
+        assert_eq!(
+            domain_from_remote_url("https://gitlab.com/owner/repo.git"),
+            Some("gitlab.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_domain_from_https_url_no_dotgit() {
+        assert_eq!(
+            domain_from_remote_url("https://github.com/owner/repo"),
+            Some("github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_domain_from_ssh_url_custom_host() {
+        assert_eq!(
+            domain_from_remote_url("git@git.example.internal:team/project.git"),
+            Some("git.example.internal".to_string())
+        );
+    }
+
+    #[test]
+    fn test_domain_from_empty_url() {
+        assert_eq!(domain_from_remote_url(""), None);
+    }
+
+    // --- infer_domain ---
+
+    #[test]
+    fn test_infer_domain_from_https_remote() {
+        let dir = TempDir::new().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        repo.remote("origin", "https://github.com/owner/repo.git").unwrap();
+
+        assert_eq!(
+            infer_domain(dir.path(), "origin"),
+            Some("github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_domain_from_ssh_remote() {
+        let dir = TempDir::new().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        repo.remote("origin", "git@gitlab.com:owner/repo.git").unwrap();
+
+        assert_eq!(
+            infer_domain(dir.path(), "origin"),
+            Some("gitlab.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_domain_named_remote() {
+        let dir = TempDir::new().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        repo.remote("upstream", "https://github.com/org/project.git").unwrap();
+
+        assert_eq!(
+            infer_domain(dir.path(), "upstream"),
+            Some("github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_domain_missing_remote_returns_none() {
+        let dir = TempDir::new().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+
+        assert_eq!(infer_domain(dir.path(), "origin"), None);
+    }
+
+    #[test]
+    fn test_infer_domain_not_a_git_repo_returns_none() {
+        let dir = TempDir::new().unwrap();
+
+        assert_eq!(infer_domain(dir.path(), "origin"), None);
+    }
+
+    // --- token_env_var_for_domain ---
+    //
+    // Tests use the injectable `_with_lookup` variant to avoid touching the
+    // process environment (which would require `unsafe` in Rust 2024 and could
+    // race with parallel tests).
+
+    fn lookup_from<'a>(pairs: &'a [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        |var| {
+            pairs.iter()
+                .find(|(k, _)| *k == var)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn test_token_github_domain_uses_github_token() {
+        let result = token_env_var_for_domain_with_lookup(
+            "github.com",
+            lookup_from(&[("GITHUB_TOKEN", "ghp_test123")]),
+        );
+        assert_eq!(result, Some(("GITHUB_TOKEN", "ghp_test123".to_string())));
+    }
+
+    #[test]
+    fn test_token_github_domain_falls_back_to_gh_token() {
+        let result = token_env_var_for_domain_with_lookup(
+            "github.com",
+            lookup_from(&[("GH_TOKEN", "ghp_fallback")]),
+        );
+        assert_eq!(result, Some(("GH_TOKEN", "ghp_fallback".to_string())));
+    }
+
+    #[test]
+    fn test_token_github_prefers_github_token_over_gh_token() {
+        let result = token_env_var_for_domain_with_lookup(
+            "github.com",
+            lookup_from(&[("GITHUB_TOKEN", "ghp_primary"), ("GH_TOKEN", "ghp_secondary")]),
+        );
+        assert_eq!(result, Some(("GITHUB_TOKEN", "ghp_primary".to_string())));
+    }
+
+    #[test]
+    fn test_token_gitlab_domain_uses_gitlab_token() {
+        let result = token_env_var_for_domain_with_lookup(
+            "gitlab.com",
+            lookup_from(&[("GITLAB_TOKEN", "glpat_test456")]),
+        );
+        assert_eq!(result, Some(("GITLAB_TOKEN", "glpat_test456".to_string())));
+    }
+
+    #[test]
+    fn test_token_gitlab_domain_falls_back_to_private_token() {
+        let result = token_env_var_for_domain_with_lookup(
+            "gitlab.com",
+            lookup_from(&[("GITLAB_PRIVATE_TOKEN", "glpat_private")]),
+        );
+        assert_eq!(result, Some(("GITLAB_PRIVATE_TOKEN", "glpat_private".to_string())));
+    }
+
+    #[test]
+    fn test_token_unknown_domain_returns_none() {
+        let result = token_env_var_for_domain_with_lookup("bitbucket.org", lookup_from(&[]));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_token_empty_domain_returns_none() {
+        let result = token_env_var_for_domain_with_lookup("", lookup_from(&[]));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_token_no_env_var_set_returns_none() {
+        let result = token_env_var_for_domain_with_lookup("github.com", lookup_from(&[]));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_token_empty_env_var_ignored() {
+        let result = token_env_var_for_domain_with_lookup(
+            "github.com",
+            lookup_from(&[("GITHUB_TOKEN", "")]),
+        );
+        assert_eq!(result, None);
     }
 }
