@@ -140,13 +140,14 @@ impl TetheredGit {
         Ok(tethered_git)
     }
 
-    /// Runs `git fetch <remote> <source>` as a subprocess to update the remote-tracking ref.
-    /// Fetch failures are intentionally soft-ignored by [`refresh`] so an offline run still works.
+    /// Runs `git fetch --tags <remote> <source>` as a subprocess to update the remote-tracking ref
+    /// and pull down all tags. Fetch failures are intentionally soft-ignored by [`refresh`] so an
+    /// offline run still works.
     fn fetch(&self) -> Result<(), ShipItError> {
         tracing::info!("Fetching {} from {}", self.source, self.remote_name);
         let sp = crate::output::start_spinner(format!("Fetching {}...", self.source).as_str());
         let output = std::process::Command::new("git")
-            .args(["fetch", &self.remote_name, &self.source])
+            .args(["fetch", "--tags", &self.remote_name, &self.source])
             .current_dir(&self.path)
             .output()
             .map_err(|e| ShipItError::Error(format!("Failed to run git fetch: {}", e)));
