@@ -56,7 +56,15 @@ Or grab a pre-built binary from the [releases page](https://github.com/trollefso
 
 ## AI-native workflow
 
-Shipit integrates with your favorite agentic coding assistant. Install shipit, then just ask your agent to create a merge request. It will follow the instructions in [AI.md](AI.md) automatically.
+See [AI.md](AI.md) for a full breakdown of how your agent is instructed to use shipit. The `shipit init` command will append these instructions to your CLAUDE.md file.
+
+## Opening merge requests
+
+Shipit integrates with your favorite agentic coding assistant. After installing shipit on your system, ask your agent to "create a merge request with shipit".
+
+### Multi-project releases
+
+To release across multiple repositories in a defined order, ask your agent to "run a multi-project release with shipit". On the first run it will prompt you for your list of projects, their directory paths, and the environment pipeline for each (e.g. `dev → qa → main → tag`), and then save the config to `.shipit/multi-release.yml` in your current directory. On subsequent runs the agent reads that config, confirms whether you want a full release or a scoped one, walks you through each step, and waits for your approval before opening any PR or pushing any tag.
 
 ---
 

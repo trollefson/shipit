@@ -366,3 +366,256 @@ shipit b2b apply "$(echo "$PLAN" | yq '.plan_file')" --allow-dirty
 PLAN=$(shipit b2t plan main --conventional-commits -y --yaml --allow-dirty)
 shipit b2t apply "$(echo "$PLAN" | yq '.plan_file')" --allow-dirty
 ```
+
+---
+
+## Multi-Project Release Workflow
+
+This section describes how an agent can coordinate releases across **multiple
+repositories** in a defined order. Each project has its own environment
+pipeline (the ordered sequence of branch-to-branch promotions and/or
+branch-to-tag operations). A shared config file persists these settings
+across workflow runs.
+
+---
+
+### Config File
+
+The multi-project config lives at `.shipit/multi-release.yml` relative to the
+directory where the agent is invoked (typically a workspace or monorepo root,
+but it can also be any convenient location).
+
+**Format:**
+
+```yaml
+# .shipit/multi-release.yml
+# Projects are released in the order they appear in this list.
+projects:
+  - name: api-service
+    dir: /absolute/path/to/api-service   # directory that contains shipit.toml
+    pipeline:
+      - type: b2b        # branch-to-branch PR/MR
+        source: dev
+        target: qa
+      - type: b2b
+        source: qa
+        target: main
+      - type: b2t        # branch-to-tag
+        source: main
+
+  - name: frontend
+    dir: /absolute/path/to/frontend
+    pipeline:
+      - type: b2b
+        source: dev
+        target: staging
+      - type: b2b
+        source: staging
+        target: main
+      - type: b2t
+        source: main
+
+  - name: infra
+    dir: /absolute/path/to/infra
+    pipeline:
+      - type: b2b
+        source: dev
+        target: main
+      - type: b2t
+        source: main
+```
+
+**Field reference:**
+
+| Field | Description |
+|---|---|
+| `name` | Human-readable project label used in agent prompts |
+| `dir` | Absolute path to the project root (must contain `shipit.toml`) |
+| `pipeline` | Ordered list of release steps for this project |
+| `pipeline[].type` | `b2b` (branch-to-branch) or `b2t` (branch-to-tag) |
+| `pipeline[].source` | Source branch |
+| `pipeline[].target` | Target branch (`b2b` only) |
+
+---
+
+### Agent Decision Tree
+
+Every time the multi-project workflow is triggered, the agent follows this
+decision tree before executing any release steps.
+
+```
+START
+  │
+  ▼
+Does .shipit/multi-release.yml exist?
+  │
+  ├─ NO ──► [First-Run Setup] ──► write config ──► continue
+  │
+  └─ YES
+       │
+       ▼
+     Ask the user:
+       "I found the following release config:
+          1. api-service  (dev → qa → main → tag)
+          2. frontend     (dev → staging → main → tag)
+          3. infra        (dev → main → tag)
+        Do you want to run the full release for all projects, or is this
+        an atypical run (e.g. a subset of projects, or fewer environment
+        steps)?"
+       │
+       ├─ FULL ──► use config as-is ──► execute
+       │
+       └─ ATYPICAL
+              │
+              ▼
+            Collect overrides from user:
+              - Which projects? (subset / reordering)
+              - For each project, which pipeline steps? (subset / reordering)
+            Do NOT write changes back to config.
+              │
+              ▼
+            Execute with overrides only
+```
+
+---
+
+### First-Run Setup
+
+When `.shipit/multi-release.yml` does not exist, the agent must collect
+configuration from the user interactively before proceeding.
+
+**Prompts to ask (in order):**
+
+1. "How many projects do you want to include in the multi-project release
+   workflow? Please list them in release order."
+2. For each project in order:
+   - "What is the name of this project?"
+   - "What is the absolute path to this project's directory?"
+   - "What is the environment pipeline for this project?  
+     List the steps in order, e.g.:  
+     `dev → qa` (b2b), `qa → main` (b2b), `main → tag` (b2t)"
+3. Show the agent's interpretation of the collected config in YAML form and
+   ask the user to confirm before writing the file.
+
+Once confirmed, write `.shipit/multi-release.yml` and proceed with the
+release using the new config.
+
+---
+
+### Executing the Workflow
+
+For each project (in config order, or user-specified order for atypical runs),
+for each pipeline step (in config order, or user-specified subset):
+
+1. `cd` into the project's `dir`.
+2. If the step is `b2b`:
+   ```bash
+   PLAN=$(shipit b2b plan <source> <target> \
+     --conventional-commits -y --yaml --allow-dirty \
+     --dir <project-dir>)
+   PLAN_FILE=$(echo "$PLAN" | yq '.plan_file')
+   ```
+3. If the step is `b2t`:
+   ```bash
+   PLAN=$(shipit b2t plan <source> \
+     --conventional-commits -y --yaml --allow-dirty \
+     --dir <project-dir>)
+   PLAN_FILE=$(echo "$PLAN" | yq '.plan_file')
+   ```
+4. Present the plan to the user and **wait for explicit approval** before
+   calling `apply`. This is mandatory — see the warning in the
+   [Agent-Enriched Plans](#agent-enriched-plans-recommended-pattern) section.
+5. On approval:
+   ```bash
+   shipit b2b apply "$PLAN_FILE" --allow-dirty --dir <project-dir>
+   # or
+   shipit b2t apply "$PLAN_FILE" --allow-dirty --dir <project-dir>
+   ```
+6. Report the result (PR/MR URL or tag name) before moving to the next step.
+
+**Do not proceed to the next pipeline step or the next project until the
+current step succeeds and the user approves.**
+
+---
+
+### Handling Atypical Runs
+
+When the user indicates a non-standard run (a subset of projects, fewer
+environment steps, a different order), the agent must:
+
+1. Collect the exact scope from the user — confirm each override explicitly.
+2. Echo back the effective plan ("I will release `api-service` dev→qa only,
+   then `infra` dev→main→tag") and wait for confirmation.
+3. Execute using the collected overrides.
+4. **Never write overrides back to `.shipit/multi-release.yml`.**  The
+   persisted config always reflects the canonical full-release workflow.
+
+---
+
+### Example: Full Release Session
+
+```
+Agent: I found the following release config:
+         1. api-service  — dev → qa (b2b) → main (b2b) → tag (b2t)
+         2. frontend     — dev → staging (b2b) → main (b2b) → tag (b2t)
+         3. infra        — dev → main (b2b) → tag (b2t)
+       Is this a full release across all projects and environments, or do
+       you want to adjust the scope?
+
+User:  Full release.
+
+Agent: Starting release for project 1/3: api-service
+
+       Step 1/3: dev → qa
+       [generates plan, shows summary]
+       Proceed with applying this plan? (yes/no)
+
+User:  yes
+
+Agent: ✓ PR opened: https://github.com/org/api-service/pull/42
+
+       Step 2/3: qa → main
+       [generates plan, shows summary]
+       Proceed with applying this plan? (yes/no)
+
+User:  yes
+
+Agent: ✓ PR opened: https://github.com/org/api-service/pull/43
+
+       Step 3/3: main → tag
+       [generates tag plan, shows summary]
+       Proceed with applying this plan? (yes/no)
+
+User:  yes
+
+Agent: ✓ Tag v1.4.0 created and pushed.
+
+       Moving to project 2/3: frontend
+       ...
+```
+
+---
+
+### Example: Atypical Run Session
+
+```
+Agent: I found the following release config:
+         1. api-service  — dev → qa (b2b) → main (b2b) → tag (b2t)
+         2. frontend     — dev → staging (b2b) → main (b2b) → tag (b2t)
+         3. infra        — dev → main (b2b) → tag (b2t)
+       Is this a full release across all projects and environments, or do
+       you want to adjust the scope?
+
+User:  Just release api-service and infra, skip tagging infra.
+
+Agent: Got it — atypical run (will not update your saved config).
+       Here is the effective plan:
+         1. api-service  — dev → qa (b2b) → main (b2b) → tag (b2t)
+         2. infra        — dev → main (b2b)  [tag step skipped]
+       Confirm? (yes/no)
+
+User:  yes
+
+Agent: Starting release for project 1/2: api-service
+       ...
+```
