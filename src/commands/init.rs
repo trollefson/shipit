@@ -164,6 +164,10 @@ pub fn init(args: InitArgs) -> Result<(), ShipItError> {
     let claude_md_path = write_claude_md(&dir)?;
     crate::output::print_success(&format!("Agent guide written to: {}", claude_md_path.display().bold()));
 
+    if args.guide_only {
+        return Ok(());
+    }
+
     let path = dir.join("shipit.toml");
 
     if path.exists() {

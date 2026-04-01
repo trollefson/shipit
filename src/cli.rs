@@ -234,4 +234,6 @@ pub struct InitArgs {
     pub platform_domain: Option<String>,
     #[arg(long, help = "Git remote to infer the platform domain from [default: origin]")]
     pub remote: Option<String>,
+    #[arg(long, help = "Only create or update the CLAUDE.md agent guide; skip all other setup")]
+    pub guide_only: bool,
 }
