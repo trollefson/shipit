@@ -504,34 +504,85 @@ release using the new config.
 
 ### Executing the Workflow
 
+**Before iterating over pipeline steps**, verify that every project in the
+effective run has been initialised with `shipit init` by checking for a
+`shipit.toml` file in its `dir`:
+
+```bash
+# For each project
+test -f <project-dir>/shipit.toml || echo "MISSING"
+```
+
+If any project is missing `shipit.toml`, run `shipit init` for it before
+continuing:
+
+```bash
+shipit init --dir <project-dir>
+```
+
+Do not proceed with any pipeline steps until all projects report a valid
+`shipit.toml`.
+
+---
+
 For each project (in config order, or user-specified order for atypical runs),
 for each pipeline step (in config order, or user-specified subset):
 
 1. `cd` into the project's `dir`.
-2. If the step is `b2b`:
+2. Check out the source branch for the current step:
+   ```bash
+   git -C <project-dir> checkout <source>
+   ```
+3. Stash any unstaged changes so the working tree is clean for planning:
+   ```bash
+   git -C <project-dir> stash --include-untracked
+   ```
+5. If the step is `b2b`:
    ```bash
    PLAN=$(shipit b2b plan <source> <target> \
      --conventional-commits -y --yaml --allow-dirty \
      --dir <project-dir>)
    PLAN_FILE=$(echo "$PLAN" | yq '.plan_file')
    ```
-3. If the step is `b2t`:
+   If the step is `b2t`:
    ```bash
    PLAN=$(shipit b2t plan <source> \
      --conventional-commits -y --yaml --allow-dirty \
      --dir <project-dir>)
    PLAN_FILE=$(echo "$PLAN" | yq '.plan_file')
    ```
-4. Present the plan to the user and **wait for explicit approval** before
+6. Record the plan outcome for the summary table (see step 9). A step has:
+   - **No changes** — the plan's `commits` list is empty.
+   - **Success** — the plan was generated without error and has commits.
+   - **Failed** — the plan command exited with an error.
+7. Present the plan to the user and **wait for explicit approval** before
    calling `apply`. This is mandatory — see the warning in the
    [Agent-Enriched Plans](#agent-enriched-plans-recommended-pattern) section.
-5. On approval:
+8. On approval:
    ```bash
    shipit b2b apply "$PLAN_FILE" --allow-dirty --dir <project-dir>
    # or
    shipit b2t apply "$PLAN_FILE" --allow-dirty --dir <project-dir>
    ```
-6. Report the result (PR/MR URL or tag name) before moving to the next step.
+9. After **all** pipeline steps across **all** projects have been planned
+   (regardless of how many were applied), output a Markdown summary table:
+
+   | Project | Step | Result | Title / Tag |
+   |---|---|---|---|
+   | api-service | dev → qa | ✓ success | feat: add payment integration |
+   | api-service | qa → main | ✓ success | Release Candidate v1.4.0 |
+   | api-service | main → tag | ✓ success | v1.4.0 |
+   | frontend | dev → staging | — no changes | — |
+   | infra | dev → main | ✗ failed | — |
+
+   **Result values:**
+   - `✓ success` — plan generated with commits present
+   - `— no changes` — plan's `commits` list was empty; nothing to release
+   - `✗ failed` — plan command exited with an error (include the error message in a note below the table)
+
+   The **Title / Tag** column shows the `title.value` from the plan YAML for
+   `b2b` steps, or the tag name for `b2t` steps. Use `—` when there is
+   nothing to show (no changes or failed).
 
 **Do not proceed to the next pipeline step or the next project until the
 current step succeeds and the user approves.**
