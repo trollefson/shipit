@@ -554,6 +554,9 @@ for each pipeline step (in config order, or user-specified subset):
 5. Present the plan to the user and **wait for explicit approval** before
    calling `apply`. This is mandatory — see the warning in the
    [Agent-Enriched Plans](#agent-enriched-plans-recommended-pattern) section.
+   Every plan summary presented to the user **must** include:
+   - **Plan ID** — the `plan_file` value from the YAML output (e.g. `3f9a1c2e4d7b0e5f.yml`)
+   - **Plan path** — the full path to the written plan file (e.g. `<project-dir>/.shipit/plans/3f9a1c2e4d7b0e5f.yml`)
 6. On approval:
    ```bash
    shipit b2b apply "$PLAN_FILE" --allow-dirty --dir <project-dir>
@@ -600,6 +603,74 @@ environment steps, a different order), the agent must:
 3. Execute using the collected overrides.
 4. **Never write overrides back to `.shipit/multi-release.yml`.**  The
    persisted config always reflects the canonical full-release workflow.
+
+---
+
+### Final Step — Release Summary
+
+After all projects and pipeline steps have been processed (or after the
+user ends the session), the agent **must** generate a release summary file.
+
+**File naming:** `release-summary-<ISO-8601-timestamp>.md`
+
+Use the current local time in `YYYYMMDDTHHMMSS` format (no colons or spaces):
+
+```
+release-summary-20240601T143022.md
+```
+
+**Write the file** to the directory where `.shipit/multi-release.yml` lives
+(the same workspace root used throughout the session).
+
+---
+
+**Summary file structure:**
+
+```markdown
+# Release Summary — <human-readable date and time>
+
+## Projects With Changes
+
+| Project | Step | Tag / PR | Title |
+|---|---|---|---|
+| api-service | main → tag | `v1.4.0` | — |
+| api-service | dev → qa | [#42](https://github.com/org/api-service/pull/42) | feat: add payment integration |
+| infra | dev → main | [#11](https://github.com/org/infra/pull/11) | chore: update terraform modules |
+
+## Projects Without Changes
+
+- **frontend** — no commits found across all pipeline steps; nothing released.
+
+## Release Highlights
+
+### New Features
+- <concise bullet summarising feature commits across all projects>
+
+### Bug Fixes
+- <concise bullet summarising fix commits across all projects>
+
+### Infrastructure
+- <concise bullet summarising chore/infra commits across all projects>
+
+### Documentation
+- <concise bullet summarising docs commits across all projects>
+
+> Sections with no entries should be omitted entirely.
+```
+
+**How to populate the summary:**
+
+1. **Projects With Changes** — one row per pipeline step that produced a
+   successful apply. Use the PR/MR URL returned by `b2b apply`, or the tag
+   name returned by `b2t apply`, as the link/value in the **Tag / PR** column.
+2. **Projects Without Changes** — list every project (or individual step)
+   where the plan's `commits` list was empty across the entire session.
+3. **Release Highlights** — aggregate the `commits` lists from every
+   successful plan across all projects. Group them by conventional-commit
+   prefix (`feat`, `fix`, `chore`/`infra`, `docs`, etc.) and write one
+   concise bullet per logical theme. Omit any section that has no entries.
+
+Present the generated file path to the user once it has been written.
 
 ---
 
