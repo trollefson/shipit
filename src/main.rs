@@ -37,7 +37,7 @@ async fn main() -> Result<(), ShipItError> {
     init_tracing(args.verbose);
 
     if let Some(cli::Commands::Init(args)) = args.command {
-        return commands::config::init(args);
+        return commands::init::init(args);
     }
 
     let ctx = Context::from_cli(&args).map_err(|e| ShipItError::Error(e.to_string()))?;
