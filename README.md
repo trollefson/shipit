@@ -64,7 +64,10 @@ Shipit integrates with your favorite agentic coding assistant. After installing 
 
 ### Multi-project releases
 
-To release across multiple repositories in a defined order, ask your agent to "run a multi-project release with shipit". On the first run it will prompt you for your list of projects, their directory paths, and the environment pipeline for each (e.g. `dev → qa → main → tag`), and then save the config to `.shipit/multi-release.yml` in your current directory. On subsequent runs the agent reads that config, confirms whether you want a full release or a scoped one, walks you through each step, and waits for your approval before opening any PR or pushing any tag.
+To release across multiple repositories in a defined order: 
+1. Run `shipit init` in a directory you can revisit for running your multi-project release
+2. Ask your agent to "run a multi-project release with shipit".
+3. On the first run it will prompt you for your list of projects, their directory paths, and the environment pipeline for each (e.g. `dev → qa → main → tag`), and then save the config to `.shipit/multi-release.yml` in your current directory. On subsequent runs the agent reads that config, confirms whether you want a full release or a scoped one, walks you through each step, and waits for your approval before opening any PR or pushing any tag.
 
 ---
 
