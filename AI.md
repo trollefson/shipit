@@ -600,9 +600,9 @@ for each pipeline step (in config order, or user-specified subset):
    **Summary file structure:**
 
    ```markdown
-   # Release Summary — <human-readable date and time>
+   # 🚀 Release Summary — <human-readable date and time>
 
-   ## Projects With Changes
+   ## ✅ Projects With Changes
 
    | Project | Step | Tag / PR | Title |
    |---|---|---|---|
@@ -610,22 +610,22 @@ for each pipeline step (in config order, or user-specified subset):
    | api-service | dev → qa | [#42](https://github.com/org/api-service/pull/42) | feat: add payment integration |
    | infra | dev → main | [#11](https://github.com/org/infra/pull/11) | chore: update terraform modules |
 
-   ## Projects Without Changes
+   ## ⏩ Projects Without Changes
 
    - **frontend** — no commits found across all pipeline steps; nothing released.
 
-   ## Release Highlights
+   ## 🔍 Release Highlights
 
-   ### New Features
+   ### ✨ New Features
    - <concise bullet summarising feature commits across all projects>
 
-   ### Bug Fixes
+   ### 🐛 Bug Fixes
    - <concise bullet summarising fix commits across all projects>
 
-   ### Infrastructure
+   ### 🔧 Infrastructure
    - <concise bullet summarising chore/infra commits across all projects>
 
-   ### Documentation
+   ### 📄 Documentation
    - <concise bullet summarising docs commits across all projects>
 
    > Sections with no entries should be omitted entirely.
@@ -644,7 +644,9 @@ for each pipeline step (in config order, or user-specified subset):
    - **Release Highlights** — aggregate the `commits` lists from every
      successful plan across all projects. Group them by conventional-commit
      prefix (`feat`, `fix`, `chore`/`infra`, `docs`, etc.) and write one
-     concise bullet per logical theme. Omit any section that has no entries.
+     concise bullet per logical theme. Mention the project the highlight is 
+     relevant to in the bullet point description. Omit any section that has 
+     no entries.
 
    Present the generated file path to the user once it has been written.
 
