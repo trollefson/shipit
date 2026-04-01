@@ -614,7 +614,7 @@ for each pipeline step (in config order, or user-specified subset):
 
    - **frontend** — no commits found across all pipeline steps; nothing released.
 
-   ## 🔍 Release Highlights
+   ## 🔍 Tagged Release Highlights
 
    ### ✨ New Features
    - <concise bullet summarising feature commits across all projects>
@@ -642,7 +642,8 @@ for each pipeline step (in config order, or user-specified subset):
    - **Projects Without Changes** — list every project (or individual step)
      where the plan's `commits` list was empty across the entire session.
    - **Release Highlights** — aggregate the `commits` lists from every
-     successful plan across all projects. Group them by conventional-commit
+     successful b2t plan across all projects. Only changes associated with 
+     tags should appear here. Group them by conventional-commit
      prefix (`feat`, `fix`, `chore`/`infra`, `docs`, etc.) and write one
      concise bullet per logical theme. Mention the project the highlight is 
      relevant to in the bullet point description. Omit any section that has 
