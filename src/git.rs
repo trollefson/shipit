@@ -441,7 +441,7 @@ impl TetheredGit {
         let obj = self.repo
             .find_object(branch_oid, Some(git2::ObjectType::Commit))
             .map_err(ShipItError::Git)?;
-        let sig = git2::Signature::now("shipit", "shipit@gitshipit.net")
+        let sig = self.repo.signature()
             .map_err(ShipItError::Git)?;
         self.repo.tag(tag_name, &obj, &sig, notes, false)
             .map_err(ShipItError::Git)?;
