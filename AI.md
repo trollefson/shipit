@@ -533,11 +533,7 @@ for each pipeline step (in config order, or user-specified subset):
    ```bash
    git -C <project-dir> checkout <source>
    ```
-3. Stash any unstaged changes so the working tree is clean for planning:
-   ```bash
-   git -C <project-dir> stash --include-untracked
-   ```
-5. If the step is `b2b`:
+3. If the step is `b2b`:
    ```bash
    PLAN=$(shipit b2b plan <source> <target> \
      --conventional-commits -y --yaml --allow-dirty \
@@ -551,34 +547,38 @@ for each pipeline step (in config order, or user-specified subset):
      --dir <project-dir>)
    PLAN_FILE=$(echo "$PLAN" | yq '.plan_file')
    ```
-6. Record the plan outcome for the summary table (see step 9). A step has:
+4. Record the plan outcome for the summary table (see step 9). A step has:
    - **No changes** — the plan's `commits` list is empty.
    - **Success** — the plan was generated without error and has commits.
    - **Failed** — the plan command exited with an error.
-7. Present the plan to the user and **wait for explicit approval** before
+5. Present the plan to the user and **wait for explicit approval** before
    calling `apply`. This is mandatory — see the warning in the
    [Agent-Enriched Plans](#agent-enriched-plans-recommended-pattern) section.
-8. On approval:
+6. On approval:
    ```bash
    shipit b2b apply "$PLAN_FILE" --allow-dirty --dir <project-dir>
    # or
    shipit b2t apply "$PLAN_FILE" --allow-dirty --dir <project-dir>
    ```
-9. After **all** pipeline steps across **all** projects have been planned
+7. After **all** pipeline steps across **all** projects have been planned
    (regardless of how many were applied), output a Markdown summary table:
 
-   | Project | Step | Result | Title / Tag |
-   |---|---|---|---|
-   | api-service | dev → qa | ✓ success | feat: add payment integration |
-   | api-service | qa → main | ✓ success | Release Candidate v1.4.0 |
-   | api-service | main → tag | ✓ success | v1.4.0 |
-   | frontend | dev → staging | — no changes | — |
-   | infra | dev → main | ✗ failed | — |
+   | Project | Step | Plan ID | Result | Title / Tag |
+   |---|---|---|---|---|
+   | api-service | dev → qa | `3f9a1c2e4d7b0e5f.yml` | ✓ success | feat: add payment integration |
+   | api-service | qa → main | `a1b2c3d4e5f60718.yml` | ✓ success | Release Candidate v1.4.0 |
+   | api-service | main → tag | `9e8d7c6b5a4f3e2d.yml` | ✓ success | v1.4.0 |
+   | frontend | dev → staging | — | — no changes | — |
+   | infra | dev → main | — | ✗ failed | — |
 
    **Result values:**
    - `✓ success` — plan generated with commits present
    - `— no changes` — plan's `commits` list was empty; nothing to release
    - `✗ failed` — plan command exited with an error (include the error message in a note below the table)
+
+   The **Plan ID** column shows the `plan_file` value from the plan YAML (e.g.
+   `3f9a1c2e4d7b0e5f.yml`). Use `—` when no plan was generated (no changes or
+   failed).
 
    The **Title / Tag** column shows the `title.value` from the plan YAML for
    `b2b` steps, or the tag name for `b2t` steps. Use `—` when there is
