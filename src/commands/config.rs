@@ -68,17 +68,23 @@ fn token_env_var_for_domain_with_lookup<F>(domain: &str, lookup: F) -> Option<(&
 where
     F: Fn(&str) -> Option<String>,
 {
-    let candidates: &[&'static str] = if domain.contains("github") {
-        &["GITHUB_TOKEN", "GH_TOKEN"]
-    } else if domain.contains("gitlab") {
-        &["GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN"]
-    } else {
-        return None;
-    };
-
-    candidates.iter().find_map(|&var| {
-        lookup(var).filter(|v| !v.is_empty()).map(|val| (var, val))
+    token_env_var_candidates(domain).and_then(|candidates| {
+        candidates.iter().find_map(|&var| {
+            lookup(var).filter(|v| !v.is_empty()).map(|val| (var, val))
+        })
     })
+}
+
+/// Returns the candidate environment variable names for the given platform domain,
+/// or `None` if the domain is unrecognised.
+fn token_env_var_candidates(domain: &str) -> Option<&'static [&'static str]> {
+    if domain.contains("github") {
+        Some(&["GITHUB_TOKEN", "GH_TOKEN"])
+    } else if domain.contains("gitlab") {
+        Some(&["GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN"])
+    } else {
+        None
+    }
 }
 
 /// Extract the hostname from a git remote URL.
@@ -209,6 +215,16 @@ pub fn init(args: InitArgs) -> Result<(), ShipItError> {
         eprintln!();
         eprintln!("  Found token in {}.", format!("${env_var_name}").bold());
         prompt_line_with_env_default("Platform token:", env_var_name, env_var_value)?
+    } else if let Some(candidates) = token_env_var_candidates(domain.trim()) {
+        let vars = candidates
+            .iter()
+            .map(|v| format!("${v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(ShipItError::Error(format!(
+            "No platform token found. Set {} or provide --platform-token.",
+            vars
+        )));
     } else {
         eprintln!();
         prompt_line("Platform token (leave blank to skip):")?
@@ -293,7 +309,7 @@ fn update_gitignore(dir: &std::path::Path) -> Result<(), ShipItError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{domain_from_remote_url, infer_domain, token_env_var_for_domain_with_lookup, update_gitignore};
+    use super::{domain_from_remote_url, infer_domain, token_env_var_candidates, token_env_var_for_domain_with_lookup, update_gitignore};
     use tempfile::TempDir;
 
     #[test]
@@ -537,5 +553,49 @@ mod tests {
             lookup_from(&[("GITHUB_TOKEN", "")]),
         );
         assert_eq!(result, None);
+    }
+
+    // --- token_env_var_candidates ---
+    //
+    // These tests cover the logic that drives the "no token found" error in
+    // `init`: a recognised platform domain should always return candidates so
+    // the caller can surface a helpful error message listing which variables to
+    // set.
+
+    #[test]
+    fn test_candidates_github_returns_expected_vars() {
+        let candidates = token_env_var_candidates("github.com").expect("should return candidates for github.com");
+        assert_eq!(candidates, &["GITHUB_TOKEN", "GH_TOKEN"]);
+    }
+
+    #[test]
+    fn test_candidates_gitlab_returns_expected_vars() {
+        let candidates = token_env_var_candidates("gitlab.com").expect("should return candidates for gitlab.com");
+        assert_eq!(candidates, &["GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN"]);
+    }
+
+    #[test]
+    fn test_candidates_unknown_domain_returns_none() {
+        assert!(token_env_var_candidates("bitbucket.org").is_none());
+    }
+
+    #[test]
+    fn test_candidates_empty_domain_returns_none() {
+        assert!(token_env_var_candidates("").is_none());
+    }
+
+    // Verify that a recognised domain with no env vars set produces `None` from
+    // the lookup (triggering the error path in init) while an unknown domain
+    // also produces `None` (falling through to the interactive prompt instead).
+    // The distinction is made via `token_env_var_candidates`, not the lookup.
+    #[test]
+    fn test_candidates_distinguishes_recognised_from_unknown_domain() {
+        // Both return None from the value lookup when no vars are set …
+        assert_eq!(token_env_var_for_domain_with_lookup("github.com", lookup_from(&[])), None);
+        assert_eq!(token_env_var_for_domain_with_lookup("bitbucket.org", lookup_from(&[])), None);
+
+        // … but only the recognised domain has candidates, enabling the error path.
+        assert!(token_env_var_candidates("github.com").is_some());
+        assert!(token_env_var_candidates("bitbucket.org").is_none());
     }
 }
