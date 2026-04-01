@@ -58,7 +58,7 @@ Or grab a pre-built binary from the [releases page](https://github.com/trollefso
 
 See [AI.md](AI.md) for a full breakdown of how your agent is instructed to use shipit. The `shipit init` command will append these instructions to your CLAUDE.md file.
 
-## Opening merge requests
+### Opening merge requests
 
 Shipit integrates with your favorite agentic coding assistant. After installing shipit on your system, ask your agent to "create a merge request with shipit".
 
