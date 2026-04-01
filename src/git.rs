@@ -933,6 +933,9 @@ pub(crate) mod test_helpers {
         let repo = Repository::init(work_path).unwrap();
         repo.set_head("refs/heads/master").unwrap();
         repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "test").unwrap();
+        config.set_str("user.email", "test@test.com").unwrap();
         repo
     }
 
