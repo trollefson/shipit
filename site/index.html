@@ -215,6 +215,46 @@
             border-color: var(--primary);
             box-shadow: 0 0 22px rgba(0, 200, 255, 0.6);
         }
+
+        /* Why use shipit */
+        .why-section {
+            margin-top: 30px;
+            text-align: left;
+            border-top: 1px solid var(--border);
+            padding-top: 24px;
+        }
+        .why-section h2 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: 0 0 16px 0;
+        }
+        .why-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .why-list li {
+            font-size: 0.88rem;
+            color: var(--text);
+            line-height: 1.5;
+            padding-left: 20px;
+            position: relative;
+        }
+        .why-list li::before {
+            content: '▸';
+            position: absolute;
+            left: 0;
+            color: var(--primary);
+        }
+        .why-list li strong {
+            color: #e6edf3;
+        }
     </style>
 </head>
 <body>
@@ -236,6 +276,18 @@
         </div>
 
         <img src="demo.gif" alt="shipit demo" style="width:100%;border-radius:10px;margin:24px 0;border:1px solid var(--border);">
+
+        <div class="why-section">
+            <h2>Why use shipit?</h2>
+            <ul class="why-list">
+                <li><strong>Plan before you push.</strong> Shipit separates "gather and review" from "execute." You see exactly what will be created before anything is pushed, making it safe to hand off to an AI agent.</li>
+                <li><strong>Agent-native by design.</strong> Deterministic plan files, <code>--yaml</code> output, and a <code>CLAUDE.md</code> integration guide make shipit a first-class citizen in agentic coding workflows.</li>
+                <li><strong>GitHub, GitLab, and more platforms to come in one binary.</strong> No plugins, no config switching. Platform is detected automatically from your remote URL.</li>
+                <li><strong>Multi-repo releases.</strong> Coordinate releases across multiple repositories in a defined order from a single config file.</li>
+                <li><strong>Commit enrichment.</strong> Fetches PR/MR titles from the platform API so your changelogs read like release notes, not raw git log output.</li>
+                <li><strong>No runtime required.</strong> Single compiled Rust binary with no Node, Python, or dependency installation.</li>
+            </ul>
+        </div>
 
         <div class="other-links">
             <p>Looking for a different version?</p>
