@@ -13,6 +13,8 @@
 [![Crates.io](https://img.shields.io/crates/v/shipit)](https://crates.io/crates/shipit)
 [![docs.rs](https://img.shields.io/docsrs/shipit)](https://docs.rs/shipit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/trollefson/shipit/branch/main/graph/badge.svg)](https://codecov.io/gh/trollefson/shipit)
+
 ---
 
 ## Why use shipit?
@@ -62,6 +64,8 @@ cargo build --release --locked
 ```
 
 Or grab a pre-built binary from the [releases page](https://github.com/trollefson/shipit/releases).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, coverage, and pre-commit hooks.
 
 ---
 

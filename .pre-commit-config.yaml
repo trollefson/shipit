@@ -14,3 +14,10 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      - id: cargo-llvm-cov
+        name: cargo llvm-cov
+        entry: cargo llvm-cov --locked
+        language: system
+        types: [rust]
+        pass_filenames: false
