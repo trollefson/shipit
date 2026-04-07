@@ -45,6 +45,38 @@ pub(crate) fn next_version(
     Some(format!("v{}.{}.{}", major, new_minor, new_patch))
 }
 
+/// Abstracts subprocess `git` calls so tests can inject a mock without spawning real processes.
+///
+/// Implemented by [`SystemRunner`] in production and by `MockRunner` in tests.
+#[cfg_attr(test, mockall::automock)]
+pub(crate) trait Runner: Send + Sync {
+    /// Runs `git` with `args` in `dir`.
+    /// Returns `Ok(stdout)` on exit-code 0, or `Err` containing stderr on failure.
+    fn run_git(&self, args: Vec<String>, dir: &Path) -> Result<Vec<u8>, ShipItError>;
+}
+
+/// Production [`Runner`] that delegates directly to `std::process::Command`.
+pub(crate) struct SystemRunner;
+
+impl Runner for SystemRunner {
+    fn run_git(&self, args: Vec<String>, dir: &Path) -> Result<Vec<u8>, ShipItError> {
+        let output = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(dir)
+            .output()
+            .map_err(|e| ShipItError::Error(format!("Failed to spawn git: {}", e)))?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(ShipItError::Error(format!(
+                "git {} failed: {}",
+                args.first().map(String::as_str).unwrap_or(""),
+                String::from_utf8_lossy(&output.stderr),
+            )))
+        }
+    }
+}
+
 /// Abstraction over the git hosting platform used by command functions.
 ///
 /// Implemented by [`GitPlatform`] in production and by `MockPlatform` in tests.
@@ -83,6 +115,8 @@ pub(crate) struct TetheredGit {
     pub(crate) platform: Box<dyn Platform>,
     /// Name of the source branch this instance is anchored to.
     pub(crate) source: String,
+    /// Subprocess runner used for git CLI calls (fetch, push, pull, status).
+    pub(crate) runner: Box<dyn Runner>,
 }
 
 impl TetheredGit {
@@ -135,6 +169,7 @@ impl TetheredGit {
             platform: Box::new(platform),
             remote_name: remote.to_string(),
             source: source.to_string(),
+            runner: Box::new(SystemRunner),
         };
         tethered_git.refresh(allow_dirty, yes)?;
         Ok(tethered_git)
@@ -146,21 +181,12 @@ impl TetheredGit {
     fn fetch(&self) -> Result<(), ShipItError> {
         tracing::info!("Fetching {} from {}", self.source, self.remote_name);
         let sp = crate::output::start_spinner(format!("Fetching {}...", self.source).as_str());
-        let output = std::process::Command::new("git")
-            .args(["fetch", "--tags", &self.remote_name, &self.source])
-            .current_dir(&self.path)
-            .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git fetch: {}", e)));
+        let result = self.runner.run_git(
+            vec!["fetch".into(), "--tags".into(), self.remote_name.clone(), self.source.clone()],
+            &self.path,
+        );
         sp.finish_and_clear();
-        let output = output?;
-
-        if !output.status.success() {
-            return Err(ShipItError::Error(format!(
-                "git fetch failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Ok(())
+        result.map(|_| ())
     }
 
     /// Fetches from the remote (best-effort), then verifies the working tree is in a safe
@@ -202,51 +228,33 @@ impl TetheredGit {
     /// Pushes `self.source` to `self.remote_name`.
     fn push_branch(&self) -> Result<(), ShipItError> {
         let sp = crate::output::start_spinner(format!("Pushing {}...", self.source).as_str());
-        let output = std::process::Command::new("git")
-            .args(["push", &self.remote_name, &self.source])
-            .current_dir(&self.path)
-            .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git push: {}", e)));
+        let result = self.runner.run_git(
+            vec!["push".into(), self.remote_name.clone(), self.source.clone()],
+            &self.path,
+        );
         sp.finish_and_clear();
-        let output = output?;
-        if !output.status.success() {
-            return Err(ShipItError::Error(format!(
-                "git push failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Ok(())
+        result.map(|_| ())
     }
 
     /// Pulls `self.source` from `self.remote_name`.
     fn pull_branch(&self) -> Result<(), ShipItError> {
         let sp = crate::output::start_spinner(format!("Pulling {}...", self.source).as_str());
-        let output = std::process::Command::new("git")
-            .args(["pull", &self.remote_name, &self.source])
-            .current_dir(&self.path)
-            .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git pull: {}", e)));
+        let result = self.runner.run_git(
+            vec!["pull".into(), self.remote_name.clone(), self.source.clone()],
+            &self.path,
+        );
         sp.finish_and_clear();
-        let output = output?;
-        if !output.status.success() {
-            return Err(ShipItError::Error(format!(
-                "git pull failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Ok(())
+        result.map(|_| ())
     }
 
     /// Returns `true` if the working tree has any uncommitted changes (`git status --porcelain`
     /// produces output).
     pub(crate) fn is_dirty(&self) -> Result<bool, ShipItError> {
-        let output = std::process::Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(&self.path)
-            .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git status: {}", e)))?;
-
-        Ok(!output.stdout.is_empty())
+        let stdout = self.runner.run_git(
+            vec!["status".into(), "--porcelain".into()],
+            &self.path,
+        )?;
+        Ok(!stdout.is_empty())
     }
 
     /// Returns the remote-tracking ref path and the current OID of `self.source`.
@@ -414,21 +422,12 @@ impl TetheredGit {
         tracing::info!("Pushing tag {} to {}", tag_name, self.remote_name);
         let refspec = format!("refs/tags/{}", tag_name);
         let sp = crate::output::start_spinner(format!("Pushing tag {}...", tag_name).as_str());
-        let output = std::process::Command::new("git")
-            .args(["push", &self.remote_name, &refspec])
-            .current_dir(&self.path)
-            .output()
-            .map_err(|e| ShipItError::Error(format!("Failed to run git push: {}", e)));
+        let result = self.runner.run_git(
+            vec!["push".into(), self.remote_name.clone(), refspec],
+            &self.path,
+        );
         sp.finish_and_clear();
-        let output = output?;
-
-        if !output.status.success() {
-            return Err(ShipItError::Error(format!(
-                "git push failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Ok(())
+        result.map(|_| ())
     }
 
     /// Creates an annotated local tag pointing at `branch_oid`.
@@ -635,8 +634,9 @@ impl GitPlatform {
 
 /// GitHub platform client, wrapping the Octocrab library.
 pub(crate) struct GitHub {
-    /// GitHub instance hostname (e.g. `"github.com"` or a GitHub Enterprise host).
-    pub domain: String,
+    /// Full base URL of the GitHub API (e.g. `"https://api.github.com"` or
+    /// `"https://my-ghe-host/api/v3"`). Tests may point this at an `http://` mock server.
+    pub base_url: String,
     /// Personal access token used for API authentication.
     pub token: String,
     /// Numeric GitHub repository ID, resolved from `owner/repo` during construction.
@@ -647,29 +647,32 @@ impl GitHub {
 
     /// Constructs a `GitHub` client by resolving the numeric repo ID from `path` (`"owner/repo"`).
     async fn new(domain: &str, token: &str, path: &str) -> Self {
-        let mut platform = Self {
-            domain: domain.to_string(),
-            token: token.to_string(),
-            project_id: 0
+        let base_url = if domain == "github.com" {
+            "https://api.github.com".to_string()
+        } else {
+            format!("https://{}/api/v3", domain)
         };
+        let mut platform = Self { base_url, token: token.to_string(), project_id: 0 };
         platform.project_id = platform.parse_project_id(path).await.expect("Project existence already verified!");
-
         platform
     }
 
+    /// Builds an authenticated Octocrab client pointed at `self.base_url`.
+    /// Accepts any URL scheme so tests can point it at an `http://` mock server.
+    fn build_client(&self) -> Result<octocrab::Octocrab, ShipItError> {
+        let base_uri = format!("{}/", self.base_url.trim_end_matches('/'));
+        OctocrabBuilder::new()
+            .personal_token(self.token.clone())
+            .base_uri(base_uri)
+            .map_err(|e| ShipItError::Error(format!("Invalid GitHub URL: {}", e)))?
+            .build()
+            .map_err(|e| ShipItError::GitHub(Box::new(e)))
+    }
+
     /// Creates a GitHub pull request from `source` into `target` and returns its HTML URL.
-    /// Supports GitHub Enterprise by configuring a custom base URI when `domain` is not
-    /// `"github.com"`.
+    /// Supports GitHub Enterprise and HTTP mock servers via `self.base_url`.
     async fn open_request(&self, source: &str, target: &str, title: &str, description: &str) -> Result<String, ShipItError> {
-        let mut builder = OctocrabBuilder::new().personal_token(self.token.clone());
-
-        if self.domain != "github.com" {
-            let base_uri = format!("https://{}/api/v3/", self.domain);
-            builder = builder.base_uri(base_uri)
-                .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
-        }
-
-        let octo = builder.build().map_err(|e| ShipItError::GitHub(Box::new(e)))?;
+        let octo = self.build_client()?;
 
         let repo = octo.repos_by_id(self.project_id).get().await.map_err(|e| ShipItError::GitHub(Box::new(e)))?;
         let owner = repo.owner.ok_or("No owner found").map_err(|e| ShipItError::Error(e.to_string()))?.login;
@@ -692,14 +695,7 @@ impl GitHub {
     /// Builds an Octocrab client from the supplied credentials, then calls
     /// `GET /repos/{self.owner}/{self.repo}/pulls/{id}`.
     async fn get_request_info(&self, id: u64) -> Result<(String, String), ShipItError> {
-        let mut builder = OctocrabBuilder::new().personal_token(self.token.to_string());
-        if self.domain != "github.com" {
-            let base_uri = format!("https://{}/api/v3/", self.domain);
-            builder = builder
-                .base_uri(base_uri)
-                .map_err(|e| ShipItError::Error(format!("Invalid GitHub domain: {}", e)))?;
-        }
-        let octo = builder.build().map_err(|e| ShipItError::GitHub(Box::new(e)))?;
+        let octo = self.build_client()?;
         let repo = octo.repos_by_id(self.project_id).get().await.map_err(|e| ShipItError::GitHub(Box::new(e)))?;
         let owner = repo.owner.ok_or("No owner found").map_err(|e| ShipItError::Error(e.to_string()))?.login;
 
@@ -747,7 +743,7 @@ impl GitHub {
 
     /// Queries the GitHub API to resolve an `"owner/repo"` path to its numeric repository ID.
     async fn parse_project_id(&self, path: &str) -> Result<u64, ShipItError> {
-        let octo = OctocrabBuilder::new().personal_token(self.token.clone()).build().map_err(|e| ShipItError::GitHub(Box::new(e)))?;
+        let octo = self.build_client()?;
         let parts: Vec<&str> = path.split('/').collect();
         if parts.len() != 2 {
             return Err(ShipItError::Error("Path must be in 'owner/repo' format".to_string()));
@@ -764,8 +760,9 @@ impl GitHub {
 
 /// GitLab platform client, wrapping the `gitlab` crate.
 pub(crate) struct GitLab {
-    /// GitLab instance hostname (e.g. `"gitlab.com"` or a self-hosted instance).
-    pub domain: String,
+    /// Full base URL of the GitLab instance (e.g. `"https://gitlab.com"` or
+    /// `"https://self-hosted.example.com"`). Tests may point this at an `http://` mock server.
+    pub base_url: String,
     /// Personal access token used for API authentication.
     pub token: String,
     /// Numeric GitLab project ID, resolved from the project path during construction.
@@ -776,23 +773,34 @@ impl GitLab {
 
     /// Constructs a `GitLab` client by resolving the numeric project ID from `path`.
     async fn new(domain: &str, token: &str, path: &str) -> Self {
-        let mut platform = Self {
-            domain: domain.to_string(),
-            token: token.to_string(),
-            project_id: 0
-        };
+        let base_url = format!("https://{}", domain);
+        let mut platform = Self { base_url, token: token.to_string(), project_id: 0 };
         platform.project_id = platform.parse_project_id(path).await.expect("Project existence already verified!");
-
         platform
+    }
+
+    /// Builds an authenticated GitLab async client pointed at `self.base_url`.
+    /// Automatically switches to HTTP (insecure) when `base_url` uses the `http://` scheme,
+    /// which allows tests to point the client at a local mock server.
+    async fn build_client(&self) -> Result<gitlab::AsyncGitlab, ShipItError> {
+        let (host, insecure) = if let Some(h) = self.base_url.strip_prefix("http://") {
+            (h, true)
+        } else if let Some(h) = self.base_url.strip_prefix("https://") {
+            (h, false)
+        } else {
+            (self.base_url.as_str(), false)
+        };
+        let mut builder = GitLabClient::builder(host, &self.token);
+        if insecure {
+            builder.insecure();
+        }
+        builder.build_async().await.map_err(|e| ShipItError::Gitlab(Box::new(e)))
     }
 
     /// Creates a GitLab merge request from `source` into `target` and returns its web URL.
     /// The source branch is configured with `remove_source_branch: true`.
     async fn open_request(&self, source: &str, target: &str, title: &str, description: &str) -> Result<String, ShipItError> {
-        let client = GitLabClient::builder(&self.domain, &self.token)
-            .build_async()
-            .await
-            .map_err(|e| ShipItError::Gitlab(Box::new(e)))?;
+        let client = self.build_client().await?;
 
         let create_mr = projects::merge_requests::CreateMergeRequest::builder()
             .project(self.project_id)
@@ -822,10 +830,7 @@ impl GitLab {
     async fn get_request_info(&self, id: u64) -> Result<(String, String), ShipItError> {
         use gitlab::api::projects::merge_requests::MergeRequest;
 
-        let client = GitLabClient::builder(&self.domain, &self.token)
-            .build_async()
-            .await
-            .map_err(|e| ShipItError::Gitlab(Box::new(e)))?;
+        let client = self.build_client().await?;
 
         let endpoint = MergeRequest::builder()
             .project(self.project_id)
@@ -877,10 +882,7 @@ impl GitLab {
         &self,
         path: &str,
     ) -> Result<u64, ShipItError> {
-        let client = GitLabClient::builder(&self.domain, &self.token)
-            .build_async()
-            .await
-            .map_err(|e| ShipItError::Gitlab(Box::new(e)))?;
+        let client = self.build_client().await?;
 
         let endpoint = projects::Project::builder()
             .project(path.to_string())
@@ -975,6 +977,7 @@ pub(crate) mod test_helpers {
             remote_name: "origin".to_string(),
             platform,
             source: source.to_string(),
+            runner: Box::new(crate::git::SystemRunner),
         }
     }
 }
@@ -982,6 +985,9 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::test_helpers::{init_repo_with_remote, make_commit, make_tag, make_tethered_git};
+    use crate::git::MockPlatform;
+    use tempfile::TempDir;
 
     // ── categorize_commits ────────────────────────────────────────────────────
 
@@ -1094,5 +1100,674 @@ mod tests {
     fn test_next_version_ignores_v_prefix() {
         let map = categorize_commits(&["fix: patch"]);
         assert_eq!(next_version(&map, "version 0.9.1"), Some("v0.9.2".to_string()));
+    }
+
+    // ── GitHub HTTP client (wiremock) ────────────────────────────────────────
+
+    /// Returns a JSON object satisfying octocrab's `Author` model (all fields non-optional).
+    fn mock_github_author() -> serde_json::Value {
+        serde_json::json!({
+            "login": "owner",
+            "id": 1,
+            "node_id": "U_1",
+            "avatar_url": "http://localhost/avatar",
+            "gravatar_id": "",
+            "url": "http://localhost/users/owner",
+            "html_url": "http://localhost/owner",
+            "followers_url": "http://localhost/users/owner/followers",
+            "following_url": "http://localhost/users/owner/following{/other_user}",
+            "gists_url": "http://localhost/users/owner/gists{/gist_id}",
+            "starred_url": "http://localhost/users/owner/starred{/owner}{/repo}",
+            "subscriptions_url": "http://localhost/users/owner/subscriptions",
+            "organizations_url": "http://localhost/users/owner/orgs",
+            "repos_url": "http://localhost/users/owner/repos",
+            "events_url": "http://localhost/users/owner/events{/privacy}",
+            "received_events_url": "http://localhost/users/owner/received_events",
+            "type": "User",
+            "site_admin": false
+        })
+    }
+
+    /// Returns a minimal JSON object satisfying octocrab's `Repository` model.
+    fn mock_github_repo(base: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": 42,
+            "name": "myrepo",
+            "url": format!("{}/repos/owner/myrepo", base),
+            "owner": mock_github_author()
+        })
+    }
+
+    /// Returns a minimal JSON object satisfying octocrab's `PullRequest` model.
+    /// `head` and `base` are required non-optional fields (ref + sha).
+    fn mock_github_pr(base: &str) -> serde_json::Value {
+        serde_json::json!({
+            "url": format!("{}/repos/owner/myrepo/pulls/1", base),
+            "id": 1,
+            "number": 1,
+            "html_url": "https://github.com/owner/myrepo/pull/1",
+            "title": "My PR",
+            "head": { "ref": "feature", "sha": "abc123" },
+            "base": { "ref": "main",    "sha": "def456" }
+        })
+    }
+
+    /// Mounts a `GET /api/v4/user` stub that the gitlab crate calls during `build_async`
+    /// to verify the token. Without it every GitLab API call returns 404.
+    async fn mount_gitlab_auth_stub(server: &wiremock::MockServer) {
+        use wiremock::{Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+        Mock::given(method("GET"))
+            .and(path("/api/v4/user"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 1, "username": "testuser", "name": "Test User"
+            })))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_github_open_request_creates_pr() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/repositories/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_github_repo(&server.uri())))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/repos/owner/myrepo/pulls"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(mock_github_pr(&server.uri())))
+            .mount(&server)
+            .await;
+
+        let gh = GitHub { base_url: server.uri(), token: "test".into(), project_id: 42 };
+        let url = gh.open_request("feature", "main", "My PR", "description").await.unwrap();
+        assert_eq!(url, "https://github.com/owner/myrepo/pull/1");
+    }
+
+    #[tokio::test]
+    async fn test_github_open_request_missing_html_url_returns_err() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/repositories/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_github_repo(&server.uri())))
+            .mount(&server)
+            .await;
+
+        // PR response missing html_url but still has the required head/base fields
+        Mock::given(method("POST"))
+            .and(path("/repos/owner/myrepo/pulls"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "url": format!("{}/repos/owner/myrepo/pulls/1", server.uri()),
+                "id": 1,
+                "number": 1,
+                "head": { "ref": "feature", "sha": "abc123" },
+                "base": { "ref": "main",    "sha": "def456" }
+            })))
+            .mount(&server)
+            .await;
+
+        let gh = GitHub { base_url: server.uri(), token: "test".into(), project_id: 42 };
+        let result = gh.open_request("feature", "main", "My PR", "description").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Failed to get pr url"));
+    }
+
+    #[tokio::test]
+    async fn test_github_get_request_info_returns_title_and_url() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/repositories/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_github_repo(&server.uri())))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/repos/owner/myrepo/pulls/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "url": format!("{}/repos/owner/myrepo/pulls/7", server.uri()),
+                "id": 7,
+                "number": 7,
+                "title": "Add feature X",
+                "html_url": "https://github.com/owner/myrepo/pull/7",
+                "head": { "ref": "feature", "sha": "abc123" },
+                "base": { "ref": "main",    "sha": "def456" }
+            })))
+            .mount(&server)
+            .await;
+
+        let gh = GitHub { base_url: server.uri(), token: "test".into(), project_id: 42 };
+        let (title, url) = gh.get_request_info(7).await.unwrap();
+        assert_eq!(title, "Add feature X");
+        assert_eq!(url, "https://github.com/owner/myrepo/pull/7");
+    }
+
+    // ── GitLab HTTP client (wiremock) ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_gitlab_open_request_creates_mr() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        mount_gitlab_auth_stub(&server).await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v4/projects/99/merge_requests"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": 1,
+                "iid": 1,
+                "web_url": "https://gitlab.com/owner/myrepo/-/merge_requests/1"
+            })))
+            .mount(&server)
+            .await;
+
+        let gl = GitLab { base_url: server.uri(), token: "test".into(), project_id: 99 };
+        let url = gl.open_request("feature", "main", "My MR", "description").await.unwrap();
+        assert_eq!(url, "https://gitlab.com/owner/myrepo/-/merge_requests/1");
+    }
+
+    #[tokio::test]
+    async fn test_gitlab_get_request_info_returns_title_and_url() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        mount_gitlab_auth_stub(&server).await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v4/projects/99/merge_requests/5"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 5,
+                "iid": 5,
+                "title": "Implement feature Y",
+                "web_url": "https://gitlab.com/owner/myrepo/-/merge_requests/5"
+            })))
+            .mount(&server)
+            .await;
+
+        let gl = GitLab { base_url: server.uri(), token: "test".into(), project_id: 99 };
+        let (title, url) = gl.get_request_info(5).await.unwrap();
+        assert_eq!(title, "Implement feature Y");
+        assert_eq!(url, "https://gitlab.com/owner/myrepo/-/merge_requests/5");
+    }
+
+    // ── find_commit_category (scoped conventional commit) ────────────────────
+
+    #[test]
+    fn test_find_commit_category_scoped_feat() {
+        // "feat(auth): add login" — the token before '(' is "feat"
+        let map = categorize_commits(&["feat(auth): add login"]);
+        assert_eq!(map["features"], vec!["feat(auth): add login"]);
+    }
+
+    #[test]
+    fn test_find_commit_category_ticket_then_type() {
+        // "[JIRA-123] feat: something" — bracket token is skipped, "feat:" on the next token matches
+        let map = categorize_commits(&["[JIRA-123] feat: something"]);
+        assert_eq!(map["features"], vec!["[JIRA-123] feat: something"]);
+    }
+
+    #[test]
+    fn test_find_commit_category_refactor_and_style() {
+        let map = categorize_commits(&["refactor: clean up", "style: format"]);
+        assert_eq!(map["infrastructure"].len(), 2);
+    }
+
+    #[test]
+    fn test_find_commit_category_test_prefix() {
+        let map = categorize_commits(&["test: add unit tests"]);
+        assert_eq!(map["infrastructure"], vec!["test: add unit tests"]);
+    }
+
+    // ── is_dirty ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_dirty_clean_repo() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.is_dirty().unwrap());
+    }
+
+    #[test]
+    fn test_is_dirty_with_untracked_file() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        std::fs::write(work_dir.path().join("dirty.txt"), "changes").unwrap();
+        assert!(tethered.is_dirty().unwrap());
+    }
+
+    // ── needs_push ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_needs_push_no_remote_tracking_ref() {
+        // No refs/remotes/origin/master exists → always needs push
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(tethered.needs_push().unwrap());
+    }
+
+    #[test]
+    fn test_needs_push_in_sync_with_remote() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let oid = make_commit(&repo, "initial commit");
+        repo.reference("refs/remotes/origin/master", oid, false, "test").unwrap();
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.needs_push().unwrap());
+    }
+
+    #[test]
+    fn test_needs_push_local_ahead_of_remote() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let initial_oid = make_commit(&repo, "initial commit");
+        repo.reference("refs/remotes/origin/master", initial_oid, false, "test").unwrap();
+        make_commit(&repo, "local-only commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(tethered.needs_push().unwrap());
+    }
+
+    // ── needs_pull ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_needs_pull_no_remote_tracking_ref() {
+        // No refs/remotes/origin/master → nothing to pull
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.needs_pull().unwrap());
+    }
+
+    #[test]
+    fn test_needs_pull_in_sync_with_remote() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let oid = make_commit(&repo, "initial commit");
+        repo.reference("refs/remotes/origin/master", oid, false, "test").unwrap();
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.needs_pull().unwrap());
+    }
+
+    #[test]
+    fn test_needs_pull_remote_ahead_of_local() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let initial_oid = make_commit(&repo, "initial commit");
+
+        // Create a commit that only exists "on the remote" (not reachable from local HEAD)
+        // by committing without advancing any ref, then pointing the remote tracking ref at it.
+        let remote_only_oid = {
+            let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(2_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let parent = repo.find_commit(initial_oid).unwrap();
+            repo.commit(None, &sig, &sig, "remote-only commit", &tree, &[&parent]).unwrap()
+        };
+
+        repo.reference("refs/remotes/origin/master", remote_only_oid, false, "test").unwrap();
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(tethered.needs_pull().unwrap());
+    }
+
+    // ── collect_commits (only_merges = true) ─────────────────────────────────
+
+    #[test]
+    fn test_collect_commits_only_merges_excludes_regular_commits() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "base commit");
+        repo.reference("refs/heads/base", base_oid, false, "test").unwrap();
+        make_commit(&repo, "regular commit 1");
+        make_commit(&repo, "regular commit 2");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits("base", &true).unwrap();
+        assert!(commits.is_empty(), "regular commits should be excluded when only_merges=true");
+    }
+
+    #[test]
+    fn test_collect_commits_only_merges_includes_merge_commits() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "base commit");
+        repo.reference("refs/heads/base", base_oid, false, "test").unwrap();
+        let master_commit = make_commit(&repo, "commit on master");
+
+        // Create a feature-branch commit (child of base, not master) without advancing HEAD,
+        // then create a merge commit on master.
+        {
+            let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let base_commit = repo.find_commit(base_oid).unwrap();
+            let feature_commit_oid = repo.commit(None, &sig, &sig, "feature commit", &tree, &[&base_commit]).unwrap();
+            let p1 = repo.find_commit(master_commit).unwrap();
+            let p2 = repo.find_commit(feature_commit_oid).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap();
+        }
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits("base", &true).unwrap();
+        assert_eq!(commits.len(), 1, "expected exactly one merge commit");
+    }
+
+    // ── collect_commits_since_tag (only_merges = true) ───────────────────────
+
+    #[test]
+    fn test_collect_commits_since_tag_only_merges_excludes_regular_commits() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "initial commit");
+        make_tag(&repo, "v1.0.0", base_oid);
+        make_commit(&repo, "regular commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits_since_tag("v1.0.0", true).unwrap();
+        assert!(commits.is_empty(), "regular commits should be excluded when only_merges=true");
+    }
+
+    #[test]
+    fn test_collect_commits_since_tag_only_merges_includes_merge_commit() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "initial commit");
+        make_tag(&repo, "v1.0.0", base_oid);
+        let on_master = make_commit(&repo, "commit on master");
+
+        // Create a feature commit off base, then merge it in.
+        {
+            let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let feature_oid = repo.commit(None, &sig, &sig, "feature commit", &tree, &[&repo.find_commit(base_oid).unwrap()]).unwrap();
+            let p1 = repo.find_commit(on_master).unwrap();
+            let p2 = repo.find_commit(feature_oid).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap();
+        }
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits_since_tag("v1.0.0", true).unwrap();
+        assert_eq!(commits.len(), 1, "expected exactly one merge commit");
+    }
+
+    // ── get_latest_tag ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_latest_tag_no_tags() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert_eq!(tethered.get_latest_tag().unwrap(), None);
+    }
+
+    #[test]
+    fn test_get_latest_tag_returns_most_recent_ancestor_tag() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+
+        // Create commits and tags with strictly increasing timestamps so get_latest_tag
+        // picks the most recent one by time.
+        {
+            let sig_old = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
+            let sig_new = git2::Signature::new("test", "test@test.com", &git2::Time::new(2_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+
+            // Commit A — tagged as v1.0.0 (older)
+            let a = repo.commit(Some("HEAD"), &sig_old, &sig_old, "initial commit", &tree, &[]).unwrap();
+            let obj_a = repo.find_object(a, Some(git2::ObjectType::Commit)).unwrap();
+            repo.tag("v1.0.0", &obj_a, &sig_old, "release", false).unwrap();
+
+            // Commit B — tagged as v1.1.0 (newer)
+            let parent_a = repo.find_commit(a).unwrap();
+            let b = repo.commit(Some("HEAD"), &sig_new, &sig_new, "second commit", &tree, &[&parent_a]).unwrap();
+            let obj_b = repo.find_object(b, Some(git2::ObjectType::Commit)).unwrap();
+            repo.tag("v1.1.0", &obj_b, &sig_new, "release", false).unwrap();
+
+            // One more commit past the tags
+            let parent_b = repo.find_commit(b).unwrap();
+            repo.commit(Some("HEAD"), &sig_new, &sig_new, "third commit", &tree, &[&parent_b]).unwrap();
+        }
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert_eq!(tethered.get_latest_tag().unwrap(), Some("v1.1.0".to_string()));
+    }
+
+    #[test]
+    fn test_get_latest_tag_with_single_tag() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let oid = make_commit(&repo, "initial commit");
+        make_tag(&repo, "v0.1.0", oid);
+        make_commit(&repo, "another commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert_eq!(tethered.get_latest_tag().unwrap(), Some("v0.1.0".to_string()));
+    }
+
+    // ── GitHub::parse_request_id ─────────────────────────────────────────────
+
+    #[test]
+    fn test_github_parse_request_id_standard_merge_commit() {
+        let msg = "Merge pull request #42 from owner/feature-branch\n\nsome body";
+        assert_eq!(GitHub::parse_request_id(msg), Some(42));
+    }
+
+    #[test]
+    fn test_github_parse_request_id_squash_merge_title() {
+        let msg = "feat: add new feature (#123)";
+        assert_eq!(GitHub::parse_request_id(msg), Some(123));
+    }
+
+    #[test]
+    fn test_github_parse_request_id_no_match() {
+        let msg = "regular commit message with no PR reference";
+        assert_eq!(GitHub::parse_request_id(msg), None);
+    }
+
+    #[test]
+    fn test_github_parse_request_id_hash_without_closing_paren() {
+        // "(#123" with no closing ')' should not match the squash pattern
+        let msg = "feat: something (#456 trailing text";
+        assert_eq!(GitHub::parse_request_id(msg), None);
+    }
+
+    // ── GitLab::parse_request_id ─────────────────────────────────────────────
+
+    #[test]
+    fn test_gitlab_parse_request_id_standard_merge_commit() {
+        let msg = "Merge branch 'feature' into 'main'\n\nSome title\n\nSee merge request group/project!99";
+        assert_eq!(GitLab::parse_request_id(msg), Some(99));
+    }
+
+    #[test]
+    fn test_gitlab_parse_request_id_no_match() {
+        let msg = "regular commit with no GitLab MR reference";
+        assert_eq!(GitLab::parse_request_id(msg), None);
+    }
+
+    #[test]
+    fn test_gitlab_parse_request_id_no_bang() {
+        // Has the "See merge request" prefix but no '!'
+        let msg = "See merge request group/project no-bang-here";
+        assert_eq!(GitLab::parse_request_id(msg), None);
+    }
+
+    // ── Runner-based subprocess methods ─────────────────────────────────────
+
+    fn make_tethered_with_runner(
+        repo: git2::Repository,
+        path: std::path::PathBuf,
+        runner: Box<dyn Runner>,
+    ) -> TetheredGit {
+        TetheredGit {
+            path,
+            repo,
+            remote_name: "origin".to_string(),
+            platform: Box::new(MockPlatform::new()),
+            source: "master".to_string(),
+            runner,
+        }
+    }
+
+    #[test]
+    fn test_fetch_passes_correct_args() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .withf(|args, _| {
+                args == &["fetch", "--tags", "origin", "master"]
+            })
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        tethered.fetch().unwrap();
+    }
+
+    #[test]
+    fn test_push_branch_passes_correct_args() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .withf(|args, _| args == &["push", "origin", "master"])
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        tethered.push_branch().unwrap();
+    }
+
+    #[test]
+    fn test_pull_branch_passes_correct_args() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .withf(|args, _| args == &["pull", "origin", "master"])
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        tethered.pull_branch().unwrap();
+    }
+
+    #[test]
+    fn test_push_tag_passes_correct_args() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .withf(|args, _| args == &["push", "origin", "refs/tags/v1.2.3"])
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        tethered.push_tag("v1.2.3").unwrap();
+    }
+
+    #[test]
+    fn test_is_dirty_returns_true_when_stdout_nonempty() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .withf(|args, _| args == &["status", "--porcelain"])
+            .times(1)
+            .returning(|_, _| Ok(b" M src/main.rs\n".to_vec()));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        assert!(tethered.is_dirty().unwrap());
+    }
+
+    #[test]
+    fn test_is_dirty_returns_false_when_stdout_empty() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .withf(|args, _| args == &["status", "--porcelain"])
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        assert!(!tethered.is_dirty().unwrap());
+    }
+
+    #[test]
+    fn test_runner_error_propagates_from_fetch() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .returning(|_, _| Err(ShipItError::Error("network error".into())));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        assert!(tethered.fetch().is_err());
     }
 }

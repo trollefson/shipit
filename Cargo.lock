@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "shipit"
-version = "1.4.4"
+version = "1.4.5"
 dependencies = [
  "async-trait",
  "chrono",
