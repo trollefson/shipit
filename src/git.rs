@@ -982,6 +982,9 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::test_helpers::{init_repo_with_remote, make_commit, make_tag, make_tethered_git};
+    use crate::git::MockPlatform;
+    use tempfile::TempDir;
 
     // ── categorize_commits ────────────────────────────────────────────────────
 
@@ -1094,5 +1097,328 @@ mod tests {
     fn test_next_version_ignores_v_prefix() {
         let map = categorize_commits(&["fix: patch"]);
         assert_eq!(next_version(&map, "version 0.9.1"), Some("v0.9.2".to_string()));
+    }
+
+    // ── find_commit_category (scoped conventional commit) ────────────────────
+
+    #[test]
+    fn test_find_commit_category_scoped_feat() {
+        // "feat(auth): add login" — the token before '(' is "feat"
+        let map = categorize_commits(&["feat(auth): add login"]);
+        assert_eq!(map["features"], vec!["feat(auth): add login"]);
+    }
+
+    #[test]
+    fn test_find_commit_category_ticket_then_type() {
+        // "[JIRA-123] feat: something" — bracket token is skipped, "feat:" on the next token matches
+        let map = categorize_commits(&["[JIRA-123] feat: something"]);
+        assert_eq!(map["features"], vec!["[JIRA-123] feat: something"]);
+    }
+
+    #[test]
+    fn test_find_commit_category_refactor_and_style() {
+        let map = categorize_commits(&["refactor: clean up", "style: format"]);
+        assert_eq!(map["infrastructure"].len(), 2);
+    }
+
+    #[test]
+    fn test_find_commit_category_test_prefix() {
+        let map = categorize_commits(&["test: add unit tests"]);
+        assert_eq!(map["infrastructure"], vec!["test: add unit tests"]);
+    }
+
+    // ── is_dirty ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_dirty_clean_repo() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.is_dirty().unwrap());
+    }
+
+    #[test]
+    fn test_is_dirty_with_untracked_file() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        std::fs::write(work_dir.path().join("dirty.txt"), "changes").unwrap();
+        assert!(tethered.is_dirty().unwrap());
+    }
+
+    // ── needs_push ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_needs_push_no_remote_tracking_ref() {
+        // No refs/remotes/origin/master exists → always needs push
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(tethered.needs_push().unwrap());
+    }
+
+    #[test]
+    fn test_needs_push_in_sync_with_remote() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let oid = make_commit(&repo, "initial commit");
+        repo.reference("refs/remotes/origin/master", oid, false, "test").unwrap();
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.needs_push().unwrap());
+    }
+
+    #[test]
+    fn test_needs_push_local_ahead_of_remote() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let initial_oid = make_commit(&repo, "initial commit");
+        repo.reference("refs/remotes/origin/master", initial_oid, false, "test").unwrap();
+        make_commit(&repo, "local-only commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(tethered.needs_push().unwrap());
+    }
+
+    // ── needs_pull ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_needs_pull_no_remote_tracking_ref() {
+        // No refs/remotes/origin/master → nothing to pull
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.needs_pull().unwrap());
+    }
+
+    #[test]
+    fn test_needs_pull_in_sync_with_remote() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let oid = make_commit(&repo, "initial commit");
+        repo.reference("refs/remotes/origin/master", oid, false, "test").unwrap();
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(!tethered.needs_pull().unwrap());
+    }
+
+    #[test]
+    fn test_needs_pull_remote_ahead_of_local() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let initial_oid = make_commit(&repo, "initial commit");
+
+        // Create a commit that only exists "on the remote" (not reachable from local HEAD)
+        // by committing without advancing any ref, then pointing the remote tracking ref at it.
+        let remote_only_oid = {
+            let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(2_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let parent = repo.find_commit(initial_oid).unwrap();
+            repo.commit(None, &sig, &sig, "remote-only commit", &tree, &[&parent]).unwrap()
+        };
+
+        repo.reference("refs/remotes/origin/master", remote_only_oid, false, "test").unwrap();
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert!(tethered.needs_pull().unwrap());
+    }
+
+    // ── collect_commits (only_merges = true) ─────────────────────────────────
+
+    #[test]
+    fn test_collect_commits_only_merges_excludes_regular_commits() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "base commit");
+        repo.reference("refs/heads/base", base_oid, false, "test").unwrap();
+        make_commit(&repo, "regular commit 1");
+        make_commit(&repo, "regular commit 2");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits("base", &true).unwrap();
+        assert!(commits.is_empty(), "regular commits should be excluded when only_merges=true");
+    }
+
+    #[test]
+    fn test_collect_commits_only_merges_includes_merge_commits() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "base commit");
+        repo.reference("refs/heads/base", base_oid, false, "test").unwrap();
+        let master_commit = make_commit(&repo, "commit on master");
+
+        // Create a feature-branch commit (child of base, not master) without advancing HEAD,
+        // then create a merge commit on master.
+        {
+            let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let base_commit = repo.find_commit(base_oid).unwrap();
+            let feature_commit_oid = repo.commit(None, &sig, &sig, "feature commit", &tree, &[&base_commit]).unwrap();
+            let p1 = repo.find_commit(master_commit).unwrap();
+            let p2 = repo.find_commit(feature_commit_oid).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap();
+        }
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits("base", &true).unwrap();
+        assert_eq!(commits.len(), 1, "expected exactly one merge commit");
+    }
+
+    // ── collect_commits_since_tag (only_merges = true) ───────────────────────
+
+    #[test]
+    fn test_collect_commits_since_tag_only_merges_excludes_regular_commits() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "initial commit");
+        make_tag(&repo, "v1.0.0", base_oid);
+        make_commit(&repo, "regular commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits_since_tag("v1.0.0", true).unwrap();
+        assert!(commits.is_empty(), "regular commits should be excluded when only_merges=true");
+    }
+
+    #[test]
+    fn test_collect_commits_since_tag_only_merges_includes_merge_commit() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "initial commit");
+        make_tag(&repo, "v1.0.0", base_oid);
+        let on_master = make_commit(&repo, "commit on master");
+
+        // Create a feature commit off base, then merge it in.
+        {
+            let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let feature_oid = repo.commit(None, &sig, &sig, "feature commit", &tree, &[&repo.find_commit(base_oid).unwrap()]).unwrap();
+            let p1 = repo.find_commit(on_master).unwrap();
+            let p2 = repo.find_commit(feature_oid).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap();
+        }
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits_since_tag("v1.0.0", true).unwrap();
+        assert_eq!(commits.len(), 1, "expected exactly one merge commit");
+    }
+
+    // ── get_latest_tag ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_latest_tag_no_tags() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert_eq!(tethered.get_latest_tag().unwrap(), None);
+    }
+
+    #[test]
+    fn test_get_latest_tag_returns_most_recent_ancestor_tag() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+
+        // Create commits and tags with strictly increasing timestamps so get_latest_tag
+        // picks the most recent one by time.
+        {
+            let sig_old = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
+            let sig_new = git2::Signature::new("test", "test@test.com", &git2::Time::new(2_000_000, 0)).unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+
+            // Commit A — tagged as v1.0.0 (older)
+            let a = repo.commit(Some("HEAD"), &sig_old, &sig_old, "initial commit", &tree, &[]).unwrap();
+            let obj_a = repo.find_object(a, Some(git2::ObjectType::Commit)).unwrap();
+            repo.tag("v1.0.0", &obj_a, &sig_old, "release", false).unwrap();
+
+            // Commit B — tagged as v1.1.0 (newer)
+            let parent_a = repo.find_commit(a).unwrap();
+            let b = repo.commit(Some("HEAD"), &sig_new, &sig_new, "second commit", &tree, &[&parent_a]).unwrap();
+            let obj_b = repo.find_object(b, Some(git2::ObjectType::Commit)).unwrap();
+            repo.tag("v1.1.0", &obj_b, &sig_new, "release", false).unwrap();
+
+            // One more commit past the tags
+            let parent_b = repo.find_commit(b).unwrap();
+            repo.commit(Some("HEAD"), &sig_new, &sig_new, "third commit", &tree, &[&parent_b]).unwrap();
+        }
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert_eq!(tethered.get_latest_tag().unwrap(), Some("v1.1.0".to_string()));
+    }
+
+    #[test]
+    fn test_get_latest_tag_with_single_tag() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let oid = make_commit(&repo, "initial commit");
+        make_tag(&repo, "v0.1.0", oid);
+        make_commit(&repo, "another commit");
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        assert_eq!(tethered.get_latest_tag().unwrap(), Some("v0.1.0".to_string()));
+    }
+
+    // ── GitHub::parse_request_id ─────────────────────────────────────────────
+
+    #[test]
+    fn test_github_parse_request_id_standard_merge_commit() {
+        let msg = "Merge pull request #42 from owner/feature-branch\n\nsome body";
+        assert_eq!(GitHub::parse_request_id(msg), Some(42));
+    }
+
+    #[test]
+    fn test_github_parse_request_id_squash_merge_title() {
+        let msg = "feat: add new feature (#123)";
+        assert_eq!(GitHub::parse_request_id(msg), Some(123));
+    }
+
+    #[test]
+    fn test_github_parse_request_id_no_match() {
+        let msg = "regular commit message with no PR reference";
+        assert_eq!(GitHub::parse_request_id(msg), None);
+    }
+
+    #[test]
+    fn test_github_parse_request_id_hash_without_closing_paren() {
+        // "(#123" with no closing ')' should not match the squash pattern
+        let msg = "feat: something (#456 trailing text";
+        assert_eq!(GitHub::parse_request_id(msg), None);
+    }
+
+    // ── GitLab::parse_request_id ─────────────────────────────────────────────
+
+    #[test]
+    fn test_gitlab_parse_request_id_standard_merge_commit() {
+        let msg = "Merge branch 'feature' into 'main'\n\nSome title\n\nSee merge request group/project!99";
+        assert_eq!(GitLab::parse_request_id(msg), Some(99));
+    }
+
+    #[test]
+    fn test_gitlab_parse_request_id_no_match() {
+        let msg = "regular commit with no GitLab MR reference";
+        assert_eq!(GitLab::parse_request_id(msg), None);
+    }
+
+    #[test]
+    fn test_gitlab_parse_request_id_no_bang() {
+        // Has the "See merge request" prefix but no '!'
+        let msg = "See merge request group/project no-bang-here";
+        assert_eq!(GitLab::parse_request_id(msg), None);
     }
 }
