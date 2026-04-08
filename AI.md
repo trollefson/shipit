@@ -670,6 +670,61 @@ environment steps, a different order), the agent must:
 
 ---
 
+### Deferred Tagging
+
+When starting a multi-project release session, inform the user of the following
+option before executing any steps:
+
+> "Sometimes you may want a `b2b` release (a pull/merge request) to be reviewed
+> and deployed before creating the tag with `b2t`. If that applies to any
+> project in this run, let me know and I will skip the `b2t` step for it now.
+> I will add it to a **Pending** section in the release summary so you can
+> resume your session later and I will run the tag creation at that point."
+
+When a `b2t` step is deferred:
+
+1. Skip the `b2t` plan and apply for that project entirely.
+2. Add a `## ⏳ Pending Tag Creation` section to the release summary file
+   beneath the "Projects Without Changes" section:
+
+   ```markdown
+   ## ⏳ Pending Tag Creation
+
+   The following projects had their `b2t` step deferred pending review and
+   deployment of the `b2b` release above. Resume your session and reference
+   the release summary file to trigger tag creation when ready.
+
+   | Project | Deferred Step | Release Summary File |
+   |---|---|---|
+   | api-service | main → tag | `release-summary-20240601T143022.md` |
+   ```
+
+3. Tell the user:
+   > "The `b2t` step for **\<project\>** has been deferred. When you are ready
+   > to create the tag, start a new session and tell me to resume from
+   > `release-summary-<timestamp>.md`. I will move the pending entry up into
+   > the **Projects With Changes** section once the tag has been created."
+
+**Resuming a deferred tag session:**
+
+When the user references a release summary file to resume a deferred `b2t`
+step, the agent must:
+
+1. Read the release summary file to identify all entries in the
+   `## ⏳ Pending Tag Creation` section.
+2. For each pending entry, run the `b2t` plan and apply flow exactly as
+   described in [Stage 3 — Main → Tag](#stage-3--main--tag), presenting the
+   plan to the user for approval before applying.
+3. On success, update the release summary file:
+   - Move the completed entry from `## ⏳ Pending Tag Creation` into the
+     `## ✅ Projects With Changes` table, adding the tag link in the
+     **Tag / PR** column.
+   - Remove the `## ⏳ Pending Tag Creation` section entirely if no pending
+     entries remain.
+4. Present the updated summary file path to the user.
+
+---
+
 ### Example: Full Release Session
 
 ```
