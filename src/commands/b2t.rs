@@ -39,7 +39,7 @@ pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2tPlanArgs, path:
     } else {
         // TODO: Use the branch's initial commit as the point to compare against when no tags are
         // present
-        tethered_git.get_latest_tag()?.expect("This project needs an initial tag to create additional tags! \
+        tethered_git.get_latest_tag(&tethered_git.source.clone())?.expect("This project needs an initial tag to create additional tags! \
                                                Please create an initial tag with 'git tag <tag_name>'")
     };
 

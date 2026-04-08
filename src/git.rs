@@ -448,9 +448,9 @@ impl TetheredGit {
     }
 
     /// Finds the most recent tag reachable from (and an ancestor of) `branch_oid`.
-    pub(crate) fn get_latest_tag(&self) -> Result<Option<String>, ShipItError> {
+    pub(crate) fn get_latest_tag(&self, branch_name: &str) -> Result<Option<String>, ShipItError> {
         let mut most_recent: Option<(i64, String)> = None;
-        let branch = self.repo.revparse_single(&self.source).map_err(ShipItError::Git)?;
+        let branch = self.repo.revparse_single(branch_name).map_err(ShipItError::Git)?;
 
         let refs = self.repo.references().map_err(ShipItError::Git)?;
         for reference in refs {
@@ -1531,7 +1531,7 @@ mod tests {
         let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
         make_commit(&repo, "initial commit");
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
-        assert_eq!(tethered.get_latest_tag().unwrap(), None);
+        assert_eq!(tethered.get_latest_tag("master").unwrap(), None);
     }
 
     #[test]
@@ -1565,7 +1565,7 @@ mod tests {
         }
 
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
-        assert_eq!(tethered.get_latest_tag().unwrap(), Some("v1.1.0".to_string()));
+        assert_eq!(tethered.get_latest_tag("master").unwrap(), Some("v1.1.0".to_string()));
     }
 
     #[test]
@@ -1577,7 +1577,7 @@ mod tests {
         make_tag(&repo, "v0.1.0", oid);
         make_commit(&repo, "another commit");
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
-        assert_eq!(tethered.get_latest_tag().unwrap(), Some("v0.1.0".to_string()));
+        assert_eq!(tethered.get_latest_tag("master").unwrap(), Some("v0.1.0".to_string()));
     }
 
     // ── GitHub::parse_request_id ─────────────────────────────────────────────

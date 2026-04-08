@@ -71,7 +71,7 @@ pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2bPlanArgs, path:
     let title = if let Some(provided) = args.title {
         provided
     } else {
-       let latest_tag = tethered_git.get_latest_tag()?;
+       let latest_tag = tethered_git.get_latest_tag(&args.target)?;
        let suggested = if let Some(tag) = latest_tag {
            let version = next_version(&categorized, &tag).expect("Expected to be able to generate a version using the latest tag!");
            format!("Release Candidate {}", version)
