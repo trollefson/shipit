@@ -591,6 +591,14 @@ for each pipeline step (in config order, or user-specified subset):
    release summary file and write it to the directory where
    `.shipit/multi-release.yml` lives.
 
+   > **Important for AI agents:** Every tag and every pull/merge request
+   > created during the release **must** appear as a clickable Markdown link
+   > in the summary. Never write a bare tag name or PR number — always wrap it
+   > in a hyperlink. Use the URL printed by `b2b apply` for pull/merge requests
+   > and construct the tag URL from the remote host
+   > (e.g. `https://github.com/org/repo/releases/tag/v1.4.0`). A summary
+   > without links is incomplete.
+
    **File naming:** `release-summary-<ISO-8601-timestamp>.md`  
    Use the current local time in `YYYYMMDDTHHMMSS` format (no colons or spaces):
    ```
