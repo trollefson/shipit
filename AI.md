@@ -12,6 +12,10 @@ promotes to `main`, and `main` is tagged for release.
 feature/my-feature  ──b2b──►  dev  ──b2b──►  main  ──b2t──►  v1.2.3
 ```
 
+**When a user asks you to use shipit to do something** (e.g. "use shipit to
+release X"), begin your response by telling them: "I'll show you a plan before
+applying anything — nothing will be created on the platform until you approve."
+
 Each stage follows the same two-step **plan / apply** pattern:
 
 1. **Plan** — collect commits, generate a description/title/notes, write a
