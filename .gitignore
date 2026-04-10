@@ -1,8 +1,8 @@
 /target
 TODO.txt
 /memory
-/.claude
 CLAUDE.md
+.claude/settings.local.json
 # shipit
 shipit.toml
 .shipit/

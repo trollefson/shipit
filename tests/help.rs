@@ -420,3 +420,12 @@ fn init_help_lists_remote_flag() {
         .stdout(contains("--remote"))
         .stdout(contains("Git remote to infer the platform domain from"));
 }
+
+#[test]
+fn init_help_lists_install_skill_flag() {
+    shipit()
+        .args(["init", "--help"])
+        .assert()
+        .stdout(contains("--install-skill"))
+        .stdout(contains("Install the shipit Claude Code skill"));
+}
