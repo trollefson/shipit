@@ -460,9 +460,9 @@ Does .shipit/multi-release.yml exist?
        ▼
      Ask the user:
        "I found the following release config:
-          1. api-service  (dev → qa → main → tag)
-          2. frontend     (dev → staging → main → tag)
-          3. infra        (dev → main → tag)
+          1. api-service  (dev → qa → main, tag)
+          2. frontend     (dev → staging → main, tag)
+          3. infra        (dev → main, tag)
         Do you want to run the full release for all projects, or is this
         an atypical run (e.g. a subset of projects, or fewer environment
         steps)?"
@@ -675,7 +675,7 @@ environment steps, a different order), the agent must:
 
 1. Collect the exact scope from the user — confirm each override explicitly.
 2. Echo back the effective plan ("I will release `api-service` dev→qa only,
-   then `infra` dev→main→tag") and wait for confirmation.
+   then `infra` dev→main, tag") and wait for confirmation.
 3. Execute using the collected overrides.
 4. **Never write overrides back to `.shipit/multi-release.yml`.**  The
    persisted config always reflects the canonical full-release workflow.
@@ -741,9 +741,9 @@ step, the agent must:
 
 ```
 Agent: I found the following release config:
-         1. api-service  — dev → qa (b2b) → main (b2b) → tag (b2t)
-         2. frontend     — dev → staging (b2b) → main (b2b) → tag (b2t)
-         3. infra        — dev → main (b2b) → tag (b2t)
+         1. api-service  — dev → qa (b2b) → main (b2b), tag (b2t)
+         2. frontend     — dev → staging (b2b) → main (b2b), tag (b2t)
+         3. infra        — dev → main (b2b), tag (b2t)
        Is this a full release across all projects and environments, or do
        you want to adjust the scope?
 
@@ -785,9 +785,9 @@ Agent: ✓ Tag v1.4.0 created and pushed.
 
 ```
 Agent: I found the following release config:
-         1. api-service  — dev → qa (b2b) → main (b2b) → tag (b2t)
-         2. frontend     — dev → staging (b2b) → main (b2b) → tag (b2t)
-         3. infra        — dev → main (b2b) → tag (b2t)
+         1. api-service  — dev → qa (b2b) → main (b2b), tag (b2t)
+         2. frontend     — dev → staging (b2b) → main (b2b), tag (b2t)
+         3. infra        — dev → main (b2b), tag (b2t)
        Is this a full release across all projects and environments, or do
        you want to adjust the scope?
 
@@ -795,7 +795,7 @@ User:  Just release api-service and infra, skip tagging infra.
 
 Agent: Got it — atypical run (will not update your saved config).
        Here is the effective plan:
-         1. api-service  — dev → qa (b2b) → main (b2b) → tag (b2t)
+         1. api-service  — dev → qa (b2b) → main (b2b), tag (b2t)
          2. infra        — dev → main (b2b)  [tag step skipped]
        Confirm? (yes/no)
 
