@@ -236,4 +236,9 @@ pub struct InitArgs {
     pub remote: Option<String>,
     #[arg(long, help = "Only create or update the CLAUDE.md agent guide; skip all other setup")]
     pub guide_only: bool,
+    #[arg(
+        long,
+        help = "Install the shipit Claude Code skill to ~/.claude/skills/shipit/SKILL.md"
+    )]
+    pub install_skill: bool,
 }

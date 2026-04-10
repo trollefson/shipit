@@ -22,6 +22,7 @@
 Most release tools execute immediately. Shipit uses a **plan/apply pattern** that separates "gather and review" from "execute." You see exactly what will be created before anything is pushed, which makes it safe to hand off to an AI agent without fear of a surprise tag or PR.
 
 - **Agent-native by design.** Deterministic plan files, `--yaml` output, and a `CLAUDE.md` integration guide make shipit a first-class citizen in agentic coding workflows.
+- **Claude Code skill included.** Run `shipit init --install-skill` to install the shipit skill globally. Then type `/shipit` in any Claude Code session to load the full workflow guide. No per-project setup required.
 - **GitHub, GitLab, and more platforms to come in one binary.** No plugins, no config switching. Platform is detected automatically from your remote URL.
 - **Multi-repo releases.** Coordinate releases across multiple repositories in a defined order from a single config file.
 - **Commit enrichment.** Fetches PR/MR titles from the platform API so your changelogs read like release notes, not raw git log output.
@@ -72,6 +73,26 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, coverage, an
 ## AI-native workflow
 
 See [AI.md](AI.md) for a full breakdown of how your agent is instructed to use shipit. The `shipit init` command will append these instructions to your CLAUDE.md file.
+
+### Claude Code skill
+
+Install the shipit skill globally so Claude Code can use it across any project without a per-project `CLAUDE.md`:
+
+```bash
+shipit init --install-skill
+```
+
+This writes the skill to `~/.claude/skills/shipit/SKILL.md`. Once installed, type `/shipit` in any Claude Code session to load the full workflow guide. Combine with `--guide-only` to install only the skill without creating a `shipit.toml`:
+
+```bash
+shipit init --guide-only --install-skill
+```
+
+Alternatively, copy the skill directory directly from this repo:
+
+```bash
+cp -r .claude/skills/shipit ~/.claude/skills/
+```
 
 ### Opening merge requests
 
