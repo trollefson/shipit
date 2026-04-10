@@ -99,6 +99,18 @@ pub(crate) trait Platform: Send + Sync {
     async fn enrich_messages(&self, messages: &[String]) -> Vec<String>;
 }
 
+/// Platform credentials needed to authenticate against the git hosting API.
+pub(crate) struct PlatformConfig {
+    pub(crate) domain: String,
+    pub(crate) token: String,
+}
+
+/// Behavioural flags shared across all shipit commands.
+pub(crate) struct RunOptions {
+    pub(crate) allow_dirty: bool,
+    pub(crate) yes: bool,
+}
+
 /// A git repository paired with its hosting platform client and a named source branch.
 ///
 /// Created via [`TetheredGit::new`], which opens the repository, detects the platform
@@ -115,6 +127,12 @@ pub(crate) struct TetheredGit {
     pub(crate) platform: Box<dyn Platform>,
     /// Name of the source branch this instance is anchored to.
     pub(crate) source: String,
+    /// Optional target branch that is known to already exist on the remote (e.g. `dev`, `main`).
+    /// When set, it is fetched during [`refresh`] alongside the source branch so that commit
+    /// comparisons against it are accurate. Leave as `None` when the target does not yet exist
+    /// as a remote ref — for example, `b2t` operations where the tag is being created for the
+    /// first time.
+    pub(crate) target: Option<String>,
     /// Subprocess runner used for git CLI calls (fetch, push, pull, status).
     pub(crate) runner: Box<dyn Runner>,
 }
@@ -124,9 +142,14 @@ impl TetheredGit {
     /// Opens the repository at `path`, resolves the hosting platform from the remote URL,
     /// verifies `source` exists as a local branch, and performs a preflight [`refresh`].
     ///
+    /// `target` should be the name of a branch that is known to already exist on the remote
+    /// (e.g. `"dev"` or `"main"` in a `b2b` flow). When provided it is fetched during `refresh`
+    /// so that commit comparisons are accurate. Pass `None` when there is no known pre-existing
+    /// target ref — for example, `b2t` operations where the tag does not yet exist.
+    ///
     /// Returns an error if the repo, remote, or branch cannot be found, if the platform
     /// cannot be detected, or if the working tree is dirty / out of sync with the remote.
-    pub(crate) async fn new(path: &Path, remote: &str, source: &str, domain: &str, token: &str, allow_dirty: bool, yes: bool) -> Result<TetheredGit, ShipItError> {
+    pub(crate) async fn new(path: &Path, remote: &str, source: &str, target: Option<&str>, platform_config: PlatformConfig, run_opts: RunOptions) -> Result<TetheredGit, ShipItError> {
         let repo = Repository::open(path)
             .map_err(|e| ShipItError::Error(format!("Failed to find a git repo: {}", e)))?;
         tracing::debug!("Found a git repository at {:?}", path);
@@ -153,7 +176,7 @@ impl TetheredGit {
 
         // use the remote URL to detect and construct the git platform
         let sp = crate::output::start_spinner("Connecting to platform...");
-        let platform_result = GitPlatform::new(&remote_url, domain, token, &repo_path).await;
+        let platform_result = GitPlatform::new(&remote_url, &platform_config.domain, &platform_config.token, &repo_path).await;
         sp.finish_and_clear();
         let platform = platform_result?;
 
@@ -169,20 +192,21 @@ impl TetheredGit {
             platform: Box::new(platform),
             remote_name: remote.to_string(),
             source: source.to_string(),
+            target: target.map(|t| t.to_string()),
             runner: Box::new(SystemRunner),
         };
-        tethered_git.refresh(allow_dirty, yes)?;
+        tethered_git.refresh(run_opts.allow_dirty, run_opts.yes)?;
         Ok(tethered_git)
     }
 
-    /// Runs `git fetch --tags <remote> <source>` as a subprocess to update the remote-tracking ref
+    /// Runs `git fetch --tags <remote> <branch>` as a subprocess to update the remote-tracking ref
     /// and pull down all tags. Fetch failures are intentionally soft-ignored by [`refresh`] so an
     /// offline run still works.
-    fn fetch(&self) -> Result<(), ShipItError> {
-        tracing::info!("Fetching {} from {}", self.source, self.remote_name);
-        let sp = crate::output::start_spinner(format!("Fetching {}...", self.source).as_str());
+    fn fetch(&self, branch: &str) -> Result<(), ShipItError> {
+        tracing::info!("Fetching {} from {}", branch, self.remote_name);
+        let sp = crate::output::start_spinner(format!("Fetching {}...", branch).as_str());
         let result = self.runner.run_git(
-            vec!["fetch".into(), "--tags".into(), self.remote_name.clone(), self.source.clone()],
+            vec!["fetch".into(), "--tags".into(), self.remote_name.clone(), branch.to_string()],
             &self.path,
         );
         sp.finish_and_clear();
@@ -193,8 +217,14 @@ impl TetheredGit {
     /// state to proceed. The dirty check is skipped when `allow_dirty` or `yes` is true.
     /// When the branch is ahead or behind the remote the user is prompted to push/pull;
     /// if `yes` is true the prompt is skipped and the operation proceeds automatically.
+    ///
+    /// When `self.target` is `Some`, it is fetched alongside the source branch so that commit
+    /// comparisons against a known, pre-existing remote branch are accurate.
     fn refresh(&self, allow_dirty: bool, yes: bool) -> Result<(), ShipItError> {
-        let _ = self.fetch();
+        let _ = self.fetch(&self.source);
+        if let Some(ref t) = self.target {
+            let _ = self.fetch(t);
+        }
 
         if self.is_dirty()? && !allow_dirty && !yes {
             return Err(ShipItError::Error("Working directory has uncommitted changes. Unsafe to continue! Clean up your uncommitted changes or add the --allow-dirty flag.".to_string()));
@@ -977,6 +1007,7 @@ pub(crate) mod test_helpers {
             remote_name: "origin".to_string(),
             platform,
             source: source.to_string(),
+            target: None,
             runner: Box::new(crate::git::SystemRunner),
         }
     }
@@ -1641,6 +1672,7 @@ mod tests {
             remote_name: "origin".to_string(),
             platform: Box::new(MockPlatform::new()),
             source: "master".to_string(),
+            target: None,
             runner,
         }
     }
@@ -1662,7 +1694,7 @@ mod tests {
             .returning(|_, _| Ok(vec![]));
 
         let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
-        tethered.fetch().unwrap();
+        tethered.fetch("master").unwrap();
     }
 
     #[test]
@@ -1768,6 +1800,6 @@ mod tests {
             .returning(|_, _| Err(ShipItError::Error("network error".into())));
 
         let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
-        assert!(tethered.fetch().is_err());
+        assert!(tethered.fetch("master").is_err());
     }
 }
