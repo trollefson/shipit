@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::cli::{B2tApplyArgs, B2tPlanArgs};
-use crate::git::{categorize_commits, generate_summary, next_version, TetheredGit};
+use crate::git::{categorize_commits, generate_summary, next_version, PlatformConfig, RunOptions, TetheredGit};
 use crate::context::Context;
 use crate::error::ShipItError;
 
@@ -16,10 +16,9 @@ pub async fn plan(ctx: &Context, args: B2tPlanArgs) -> Result<(), ShipItError> {
         &path,
         &args.remote,
         &args.branch,
-        &ctx.settings.platform.domain,
-        &ctx.settings.platform.token,
-        args.allow_dirty,
-        args.yes,
+        None,
+        PlatformConfig { domain: ctx.settings.platform.domain.clone(), token: ctx.settings.platform.token.clone() },
+        RunOptions { allow_dirty: args.allow_dirty, yes: args.yes },
     ).await?;
     run_plan(tethered_git, args, &path).await
 }
@@ -152,10 +151,9 @@ pub async fn apply(ctx: &Context, args: B2tApplyArgs) -> Result<(), ShipItError>
         &dir,
         &args.remote,
         &tag_plan.branch,
-        &ctx.settings.platform.domain,
-        &ctx.settings.platform.token,
-        args.allow_dirty,
-        args.yes,
+        None,
+        PlatformConfig { domain: ctx.settings.platform.domain.clone(), token: ctx.settings.platform.token.clone() },
+        RunOptions { allow_dirty: args.allow_dirty, yes: args.yes },
     ).await?;
 
     run_apply(tethered_git, tag_plan).await
