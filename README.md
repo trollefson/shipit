@@ -66,8 +66,7 @@ cargo build --release --locked
 
 ### Pre-built Releases
 
-See the [releases page](claude --resume af1da586-c9fb-4ed8-8d3e-4edaf4634ff4
-) for the binaries installed by gitshipit.net/install
+See the [releases page](https://github.com/trollefson/shipit/releases) for the binaries installed by gitshipit.net/install
 
 ### Install Claude Code Skill
 
@@ -117,10 +116,10 @@ Claude will check for a `.shipit/multi-release.yml` config (creating one interac
 
 | Platform | Architecture | Status |
 |----------|--------------|--------|
-| Linux    | x86_64       | ✓      |
-| macOS    | x86_64       | ✓      |
-| macOS    | aarch64      | ✓      |
-| Windows  | x86_64       | ✓      |
+| Linux    | x86_64       | ✅      |
+| macOS    | x86_64       | ✅      |
+| macOS    | aarch64      | ✅      |
+| Windows  | x86_64       | ✅      |
 
 ---
 
