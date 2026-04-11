@@ -246,7 +246,7 @@ impl TetheredGit {
             let confirmed = yes || crate::output::prompt_pull(&self.source)
                 .map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
             if confirmed {
-                self.pull_branch()?;
+                self.fetch_branch()?;
             } else {
                 return Err(ShipItError::Error("Aborted: pull the latest changes before continuing.".to_string()));
             }
@@ -266,11 +266,13 @@ impl TetheredGit {
         result.map(|_| ())
     }
 
-    /// Pulls `self.source` from `self.remote_name`.
-    fn pull_branch(&self) -> Result<(), ShipItError> {
+    /// Fetches `self.source` from `self.remote_name` to bring the remote-tracking ref up to date.
+    /// Using fetch (rather than pull) works correctly even when `self.source` is not the
+    /// currently checked-out branch, which is always the case for `b2t` operations.
+    fn fetch_branch(&self) -> Result<(), ShipItError> {
         let sp = crate::output::start_spinner(format!("Pulling {}...", self.source).as_str());
         let result = self.runner.run_git(
-            vec!["pull".into(), self.remote_name.clone(), self.source.clone()],
+            vec!["fetch".into(), self.remote_name.clone(), self.source.clone()],
             &self.path,
         );
         sp.finish_and_clear();
@@ -1716,7 +1718,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pull_branch_passes_correct_args() {
+    fn test_fetch_branch_passes_correct_args() {
         let work_dir = TempDir::new().unwrap();
         let bare_dir = TempDir::new().unwrap();
         let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
@@ -1725,12 +1727,12 @@ mod tests {
         let mut mock_runner = MockRunner::new();
         mock_runner
             .expect_run_git()
-            .withf(|args, _| args == &["pull", "origin", "master"])
+            .withf(|args, _| args == &["fetch", "origin", "master"])
             .times(1)
             .returning(|_, _| Ok(vec![]));
 
         let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
-        tethered.pull_branch().unwrap();
+        tethered.fetch_branch().unwrap();
     }
 
     #[test]
