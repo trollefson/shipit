@@ -106,6 +106,8 @@ Claude will run `shipit b2t plan` to collect commits since the last tag, suggest
 
 Claude will check for a `.shipit/multi-release.yml` config (creating one interactively on first run), walk through each project and pipeline step in order, present every plan before applying it, and produce a Markdown release summary with links to every PR/MR and tag created. These summaries are a great way to build a static site of release notes.
 
+[![asciicast](https://asciinema.org/a/w0UU7XWUYzBkxkp1.svg)](https://asciinema.org/a/w0UU7XWUYzBkxkp1)
+
 ---
 
 ## CLI Docs
