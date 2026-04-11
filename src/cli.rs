@@ -217,8 +217,10 @@ pub enum Commands {
     B2b(B2bArgs),
     /// Plan or apply an annotated tag on a branch
     B2t(B2tArgs),
-    /// Write the default config to the platform config directory (overwrites existing config)
+    /// Initialize shipit in the current project
     Init(InitArgs),
+    /// Install the shipit Claude Code skill to ~/.claude/skills/shipit/SKILL.md
+    Claude(ClaudeArgs),
 }
 
 #[derive(Args, Debug, Default)]
@@ -234,11 +236,7 @@ pub struct InitArgs {
     pub platform_domain: Option<String>,
     #[arg(long, help = "Git remote to infer the platform domain from [default: origin]")]
     pub remote: Option<String>,
-    #[arg(long, help = "Only create or update the CLAUDE.md agent guide; skip all other setup")]
-    pub guide_only: bool,
-    #[arg(
-        long,
-        help = "Install the shipit Claude Code skill to ~/.claude/skills/shipit/SKILL.md"
-    )]
-    pub install_skill: bool,
 }
+
+#[derive(Args, Debug, Default)]
+pub struct ClaudeArgs {}

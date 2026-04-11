@@ -40,6 +40,10 @@ async fn main() -> Result<(), ShipItError> {
         return commands::init::init(args);
     }
 
+    if let Some(cli::Commands::Claude(args)) = args.command {
+        return commands::claude::claude(args);
+    }
+
     let ctx = Context::from_cli(&args).map_err(|e| ShipItError::Error(e.to_string()))?;
     match args.command {
         Some(cli::Commands::B2b(b2b)) => match b2b.command {
@@ -50,7 +54,7 @@ async fn main() -> Result<(), ShipItError> {
             cli::B2tSubcommand::Plan(args) => commands::b2t::plan(&ctx, args).await?,
             cli::B2tSubcommand::Apply(args) => commands::b2t::apply(&ctx, args).await?,
         },
-        Some(cli::Commands::Init(_)) => unreachable!(),
+        Some(cli::Commands::Init(_)) | Some(cli::Commands::Claude(_)) => unreachable!(),
         None => {}
     }
     Ok(())

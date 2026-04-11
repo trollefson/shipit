@@ -1,3 +1,5 @@
+use std::io;
+
 use owo_colors::OwoColorize;
 
 use crate::error::ShipItError;
@@ -68,6 +70,66 @@ pub fn print_token_prompt(label: &str) {
     use std::io::Write;
     eprint!("  {} ", label.bold());
     std::io::stderr().flush().ok();
+}
+
+/// Prompt for a line of input, returning the trimmed result.
+pub fn prompt_line(label: &str) -> Result<String, ShipItError> {
+    print_token_prompt(label);
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    Ok(input.trim().to_string())
+}
+
+/// Prompt for a line of input, returning `default` if the user presses Enter.
+pub fn prompt_line_with_default(label: &str, default: &str) -> Result<String, ShipItError> {
+    print_token_prompt(&format!("{} [{}]", label, default));
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    let trimmed = input.trim().to_string();
+    if trimmed.is_empty() {
+        Ok(default.to_string())
+    } else {
+        Ok(trimmed)
+    }
+}
+
+/// Prompt for a secret value whose default comes from an environment variable.
+///
+/// Displays the env var *name* (e.g. `[$GITHUB_TOKEN]`) so the secret is never
+/// echoed to the terminal. Pressing Enter accepts the env var's current value;
+/// typing overrides it.
+pub fn prompt_line_with_env_default(label: &str, env_var_name: &str, env_var_value: &str) -> Result<String, ShipItError> {
+    print_token_prompt(&format!("{} [${env_var_name}]", label));
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    let trimmed = input.trim().to_string();
+    if trimmed.is_empty() {
+        Ok(env_var_value.to_string())
+    } else {
+        Ok(trimmed)
+    }
+}
+
+/// Prompt for a yes/no answer. Returns `default_yes` if the user presses Enter.
+#[allow(dead_code)] // available for future interactive prompts
+pub fn prompt_yes_no(label: &str, default_yes: bool) -> Result<bool, ShipItError> {
+    let hint = if default_yes { "Y/n" } else { "y/N" };
+    print_token_prompt(&format!("{} [{}]", label, hint));
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| ShipItError::Error(format!("Failed to read input: {}", e)))?;
+    Ok(match input.trim().to_lowercase().as_str() {
+        "" => default_yes,
+        "y" | "yes" => true,
+        _ => false,
+    })
 }
 
 /// Print a merge request title prompt with a default suggestion, flush stdout, and read
