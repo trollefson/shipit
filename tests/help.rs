@@ -404,12 +404,19 @@ fn init_help_lists_platform_domain_flag() {
 }
 
 #[test]
-fn init_help_lists_guide_only_flag() {
+fn claude_help_exits_success() {
     shipit()
-        .args(["init", "--help"])
+        .args(["claude", "--help"])
         .assert()
-        .stdout(contains("--guide-only"))
-        .stdout(contains("Only create or update the CLAUDE.md agent guide"));
+        .success();
+}
+
+#[test]
+fn help_lists_claude_command() {
+    shipit()
+        .arg("--help")
+        .assert()
+        .stdout(contains("claude"));
 }
 
 #[test]
@@ -419,13 +426,4 @@ fn init_help_lists_remote_flag() {
         .assert()
         .stdout(contains("--remote"))
         .stdout(contains("Git remote to infer the platform domain from"));
-}
-
-#[test]
-fn init_help_lists_install_skill_flag() {
-    shipit()
-        .args(["init", "--help"])
-        .assert()
-        .stdout(contains("--install-skill"))
-        .stdout(contains("Install the shipit Claude Code skill"));
 }

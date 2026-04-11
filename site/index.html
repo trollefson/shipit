@@ -216,6 +216,57 @@
             box-shadow: 0 0 22px rgba(0, 200, 255, 0.6);
         }
 
+        /* Claude Code Skill Usage */
+        .skill-section {
+            margin-top: 30px;
+            text-align: left;
+            border-top: 1px solid var(--border);
+            padding-top: 24px;
+        }
+        .skill-section h2 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: 0 0 16px 0;
+        }
+        .skill-section p {
+            font-size: 0.88rem;
+            color: var(--text);
+            line-height: 1.5;
+            margin: 0 0 16px 0;
+        }
+        .skill-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .skill-list li {
+            font-size: 0.88rem;
+            color: var(--text);
+            line-height: 1.5;
+        }
+        .skill-list li strong {
+            display: block;
+            color: #e6edf3;
+            margin-bottom: 4px;
+        }
+        .skill-cmd {
+            display: inline-block;
+            background: var(--dark);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 4px 10px;
+            color: var(--primary);
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.82rem;
+            margin-bottom: 6px;
+        }
+
         /* Why use shipit */
         .why-section {
             margin-top: 30px;
@@ -279,14 +330,37 @@
 
         <div class="why-section">
             <h2>Why use shipit?</h2>
+            <p style="font-size:0.88rem;color:var(--text);line-height:1.5;margin:0 0 16px 0;">Most release tools execute immediately. Shipit uses a <strong>plan/apply pattern</strong> that separates "gather and review" from "execute." You see exactly what will be created before anything is pushed, which makes it safe to hand off to an AI agent without fear of a surprise tag or PR.</p>
             <ul class="why-list">
-                <li><strong>Plan before you push.</strong> Shipit separates "gather and review" from "execute." You see exactly what will be created before anything is pushed, making it safe to hand off to an AI agent.</li>
-                <li><strong>Agent-native by design.</strong> Deterministic plan files, <code>--yaml</code> output, and a <code>CLAUDE.md</code> integration guide make shipit a first-class citizen in agentic coding workflows.</li>
-                <li><strong>Claude Code skill included.</strong> Run <code>shipit init --install-skill</code> to install the shipit skill globally. Then type <code>/shipit</code> in any Claude Code session to load the full workflow guide. No per-project setup required.</li>
-                <li><strong>GitHub, GitLab, and more platforms to come in one binary.</strong> No plugins, no config switching. Platform is detected automatically from your remote URL.</li>
-                <li><strong>Multi-repo releases.</strong> Coordinate releases across multiple repositories in a defined order from a single config file.</li>
+                <li><strong>Agent-native by design.</strong> Deterministic plan files and <code>--yaml</code> output make shipit a first-class citizen in agentic coding workflows while still being a standalone tool meant for humans.</li>
+                <li><strong>Claude Code skill included.</strong> Run <code>shipit claude</code> to install the shipit skill globally. Then type <code>/shipit</code> in any Claude Code session to load the full workflow guide. No per-project setup required.</li>
+                <li><strong>GitHub, GitLab, and more platforms to come in one binary.</strong> No plugins, no config switching, and no git platform lock-in. Platform is detected automatically from your remote URL.</li>
+                <li><strong>Multi-repo releases.</strong> Coordinate releases across multiple repositories in a defined order from a single config file using an agent or write your own script.</li>
                 <li><strong>Commit enrichment.</strong> Fetches PR/MR titles from the platform API so your changelogs read like release notes, not raw git log output.</li>
                 <li><strong>No runtime required.</strong> Single compiled Rust binary with no Node, Python, or dependency installation.</li>
+            </ul>
+        </div>
+
+        <div class="skill-section">
+            <h2>Claude Code Skill Usage</h2>
+            <img src="demo-claude.gif" alt="shipit claude demo" style="width:100%;border-radius:10px;margin:0 0 16px 0;border:1px solid var(--border);">
+            <p>The <code>/shipit</code> skill loads the full workflow guide into Claude's context. Claude will confirm your intent, generate a plan before touching anything, and ask for your approval before creating any PR/MR or tag.</p>
+            <ul class="skill-list">
+                <li>
+                    <div class="skill-cmd">/shipit create a merge request</div>
+                    <strong>Opening merge requests</strong>
+                    Claude will run <code>shipit b2b plan</code> to collect commits between your source and target branches, enrich the description from PR/MR titles, present the plan for review, and open the pull/merge request only after you approve.
+                </li>
+                <li>
+                    <div class="skill-cmd">/shipit create a tag</div>
+                    <strong>Creating tags</strong>
+                    Claude will run <code>shipit b2t plan</code> to collect commits since the last tag, suggest the next semantic version, present the annotated tag plan for review, and push the tag only after you approve.
+                </li>
+                <li>
+                    <div class="skill-cmd">/shipit run a multi-project release</div>
+                    <strong>Multi-project releases</strong>
+                    Claude will check for a <code>.shipit/multi-release.yml</code> config (creating one interactively on first run), walk through each project and pipeline step in order, present every plan before applying it, and produce a Markdown release summary with links to every PR/MR and tag created. These summaries are a great way to build a static site of release notes.
+                </li>
             </ul>
         </div>
 
