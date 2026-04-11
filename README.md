@@ -21,10 +21,10 @@
 
 Most release tools execute immediately. Shipit uses a **plan/apply pattern** that separates "gather and review" from "execute." You see exactly what will be created before anything is pushed, which makes it safe to hand off to an AI agent without fear of a surprise tag or PR.
 
-- **Agent-native by design.** Deterministic plan files, `--yaml` output, and a `CLAUDE.md` integration guide make shipit a first-class citizen in agentic coding workflows.
-- **Claude Code skill included.** Run `shipit init --install-skill` to install the shipit skill globally. Then type `/shipit` in any Claude Code session to load the full workflow guide. No per-project setup required.
-- **GitHub, GitLab, and more platforms to come in one binary.** No plugins, no config switching. Platform is detected automatically from your remote URL.
-- **Multi-repo releases.** Coordinate releases across multiple repositories in a defined order from a single config file.
+- **Agent-native by design.** Deterministic plan files and `--yaml` output make shipit a first-class citizen in agentic coding workflows while still being a standalone tool meant for humans.
+- **Claude Code skill included.** Run `shipit claude` to install the shipit skill globally. Then type `/shipit` in any Claude Code session to load the full workflow guide. No per-project setup required.
+- **GitHub, GitLab, and more platforms to come in one binary.** No plugins, no config switching, and no git platform lock-in. Platform is detected automatically from your remote URL.
+- **Multi-repo releases.** Coordinate releases across multiple repositories in a defined order from a single config file using an agent or write your own script.
 - **Commit enrichment.** Fetches PR/MR titles from the platform API so your changelogs read like release notes, not raw git log output.
 - **No runtime required.** Single compiled Rust binary with no Node, Python, or dependency installation.
 
@@ -64,47 +64,48 @@ cd shipit
 cargo build --release --locked
 ```
 
-Or grab a pre-built binary from the [releases page](https://github.com/trollefson/shipit/releases).
+### Pre-built Releases
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, coverage, and pre-commit hooks.
+See the [releases page](claude --resume af1da586-c9fb-4ed8-8d3e-4edaf4634ff4
+) for the binaries installed by gitshipit.net/install
+
+### Install Claude Code Skill
+
+```bash
+shipit claude
+```
 
 ---
 
-## AI-native workflow
+## Claude Code Skill Usage
 
-See [AI.md](AI.md) for a full breakdown of how your agent is instructed to use shipit. The `shipit init` command will append these instructions to your CLAUDE.md file.
+![Shipit claude demo](site/demo-claude.gif)
 
-### Claude Code skill
-
-Install the shipit skill globally so Claude Code can use it across any project without a per-project `CLAUDE.md`:
-
-```bash
-shipit init --install-skill
-```
-
-This writes the skill to `~/.claude/skills/shipit/SKILL.md`. Once installed, type `/shipit` in any Claude Code session to load the full workflow guide. Combine with `--guide-only` to install only the skill without creating a `shipit.toml`:
-
-```bash
-shipit init --guide-only --install-skill
-```
-
-Alternatively, copy the skill directory directly from this repo:
-
-```bash
-cp -r .claude/skills/shipit ~/.claude/skills/
-```
+The `/shipit` skill loads the full workflow guide into Claude's context. Claude will confirm your intent, generate a plan (title, description, and commit list) before touching anything, and ask for your approval before creating any PR/MR or tag.
 
 ### Opening merge requests
 
-Shipit integrates with your favorite agentic coding assistant. After installing shipit on your system, ask your agent to "create a merge request with shipit".
+```
+/shipit create a merge request
+```
+
+Claude will run `shipit b2b plan` to collect commits between your source and target branches, enrich the description from PR/MR titles, present the plan for review, and open the pull/merge request only after you approve.
+
+### Creating tags
+
+```
+/shipit create a tag
+```
+
+Claude will run `shipit b2t plan` to collect commits since the last tag, suggest the next semantic version, present the annotated tag plan for review, and push the tag only after you approve.
 
 ### Multi-project releases
 
-To release across multiple repositories in a defined order: 
+```
+/shipit run a multi-project release
+```
 
-1. Run `shipit init --guide-only` in a directory you can revisit for running your multi-project release
-2. Ask your agent to "run a multi-project release with shipit".
-3. On the first run it will prompt you for your list of projects, their directory paths, and the environment pipeline for each (e.g. `dev → qa → main → tag`), and then save the config to `.shipit/multi-release.yml` in your current directory. On subsequent runs the agent reads that config, confirms whether you want a full release or a scoped one, walks you through each step, and waits for your approval before opening any PR or pushing any tag.
+Claude will check for a `.shipit/multi-release.yml` config (creating one interactively on first run), walk through each project and pipeline step in order, present every plan before applying it, and produce a Markdown release summary with links to every PR/MR and tag created. These summaries are a great way to build a static site of release notes.
 
 ---
 
@@ -122,6 +123,10 @@ To release across multiple repositories in a defined order:
 | Windows  | x86_64       | ✓      |
 
 ---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, coverage, and pre-commit hooks.
 
 ## License
 

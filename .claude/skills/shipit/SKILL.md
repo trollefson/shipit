@@ -458,34 +458,49 @@ decision tree before executing any release steps.
 START
   │
   ▼
-Does .shipit/multi-release.yml exist?
+Ask the user:
+  "Do you have an existing multi-release config file (multi-release.yml),
+   or would you like me to generate one?
+   If you already have one, please provide the path to it."
   │
-  ├─ NO ──► [First-Run Setup] ──► write config ──► continue
+  ├─ HAS EXISTING FILE (user provides path)
+  │       │
+  │       ▼
+  │     Read the file at the provided path and continue to [Review Config]
   │
-  └─ YES
-       │
-       ▼
-     Ask the user:
-       "I found the following release config:
-          1. api-service  (dev → qa → main, tag)
-          2. frontend     (dev → staging → main, tag)
-          3. infra        (dev → main, tag)
-        Do you want to run the full release for all projects, or is this
-        an atypical run (e.g. a subset of projects, or fewer environment
-        steps)?"
-       │
-       ├─ FULL ──► use config as-is ──► execute
-       │
-       └─ ATYPICAL
-              │
-              ▼
-            Collect overrides from user:
-              - Which projects? (subset / reordering)
-              - For each project, which pipeline steps? (subset / reordering)
-            Do NOT write changes back to config.
-              │
-              ▼
-            Execute with overrides only
+  └─ GENERATE NEW (or no path provided)
+         │
+         ▼
+       Does .shipit/multi-release.yml exist in the current directory?
+         │
+         ├─ YES ──► Read it and continue to [Review Config]
+         │
+         └─ NO ──► [First-Run Setup] ──► write config ──► continue
+
+[Review Config]
+  │
+  ▼
+Ask the user:
+  "I found the following release config:
+     1. api-service  (dev → qa → main, tag)
+     2. frontend     (dev → staging → main, tag)
+     3. infra        (dev → main, tag)
+   Do you want to run the full release for all projects, or is this
+   an atypical run (e.g. a subset of projects, or fewer environment
+   steps)?"
+  │
+  ├─ FULL ──► use config as-is ──► execute
+  │
+  └─ ATYPICAL
+         │
+         ▼
+       Collect overrides from user:
+         - Which projects? (subset / reordering)
+         - For each project, which pipeline steps? (subset / reordering)
+       Do NOT write changes back to config.
+         │
+         ▼
+       Execute with overrides only
 ```
 
 ---
