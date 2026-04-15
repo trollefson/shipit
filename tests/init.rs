@@ -109,6 +109,110 @@ fn does_not_overwrite_existing_config() {
     assert_eq!(content, "# existing config\n", "existing config should not be overwritten");
 }
 
+// --- --yes flag ---
+
+#[test]
+fn yes_uses_inferred_domain_and_env_token_without_prompting() {
+    let dir = TempDir::new().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    repo.remote("origin", "https://github.com/owner/repo.git").unwrap();
+
+    Command::cargo_bin("shipit")
+        .unwrap()
+        .env("GITHUB_TOKEN", "ghp_yes_test")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITLAB_TOKEN")
+        .env_remove("GITLAB_PRIVATE_TOKEN")
+        .args(["init", "--dir", dir.path().to_str().unwrap(), "-y"])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(dir.path().join("shipit.toml")).unwrap();
+    assert!(content.contains("github.com"), "inferred domain should be written");
+    assert!(content.contains("ghp_yes_test"), "env token should be written");
+}
+
+#[test]
+fn yes_short_flag_works() {
+    let dir = TempDir::new().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    repo.remote("origin", "https://github.com/owner/repo.git").unwrap();
+
+    Command::cargo_bin("shipit")
+        .unwrap()
+        .env("GITHUB_TOKEN", "ghp_short_flag")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITLAB_TOKEN")
+        .env_remove("GITLAB_PRIVATE_TOKEN")
+        .args(["init", "--dir", dir.path().to_str().unwrap(), "-y"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join("shipit.toml").exists());
+}
+
+#[test]
+fn yes_with_no_remote_skips_domain_and_token() {
+    let dir = TempDir::new().unwrap();
+    git2::Repository::init(dir.path()).unwrap();
+
+    Command::cargo_bin("shipit")
+        .unwrap()
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITLAB_TOKEN")
+        .env_remove("GITLAB_PRIVATE_TOKEN")
+        .args(["init", "--dir", dir.path().to_str().unwrap(), "-y"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join("shipit.toml").exists());
+}
+
+#[test]
+fn yes_with_known_domain_and_missing_token_still_errors() {
+    let dir = TempDir::new().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    repo.remote("origin", "https://github.com/owner/repo.git").unwrap();
+
+    Command::cargo_bin("shipit")
+        .unwrap()
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITLAB_TOKEN")
+        .env_remove("GITLAB_PRIVATE_TOKEN")
+        .args(["init", "--dir", dir.path().to_str().unwrap(), "-y"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn yes_explicit_flags_take_precedence_over_inferred() {
+    let dir = TempDir::new().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    repo.remote("origin", "https://github.com/owner/repo.git").unwrap();
+
+    Command::cargo_bin("shipit")
+        .unwrap()
+        .env("GITHUB_TOKEN", "ghp_env_token")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITLAB_TOKEN")
+        .env_remove("GITLAB_PRIVATE_TOKEN")
+        .args([
+            "init",
+            "--dir", dir.path().to_str().unwrap(),
+            "--platform-domain", "gitlab.com",
+            "--platform-token", "glpat_explicit",
+            "-y",
+        ])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(dir.path().join("shipit.toml")).unwrap();
+    assert!(content.contains("gitlab.com"), "explicit domain should win over inferred");
+    assert!(content.contains("glpat_explicit"), "explicit token should win over env");
+}
+
 // --- error cases ---
 
 #[test]

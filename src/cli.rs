@@ -236,6 +236,12 @@ pub struct InitArgs {
     pub platform_domain: Option<String>,
     #[arg(long, help = "Git remote to infer the platform domain from [default: origin]")]
     pub remote: Option<String>,
+    #[arg(
+        short = 'y',
+        long,
+        help = "Automatically accept all prompts using inferred or discovered defaults"
+    )]
+    pub yes: bool,
 }
 
 #[derive(Args, Debug, Default)]

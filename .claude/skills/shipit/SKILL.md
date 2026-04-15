@@ -259,12 +259,13 @@ structured description before calling `plan` again with `--description`.
 
 ### `shipit init`
 
-| Flag | Description |
-|---|---|
-| `--platform-domain <domain>` | Platform domain (default: inferred from remote URL) |
-| `--platform-token <token>` | Platform personal access token (default: inferred from env — see below) |
-| `--remote <name>` | Git remote to infer the domain from (default: `origin`) |
-| `--dir <path>` | Directory to write config to (default: cwd) |
+| Flag | Short | Description |
+|---|---|---|
+| `--platform-domain <domain>` | | Platform domain (default: inferred from remote URL) |
+| `--platform-token <token>` | | Platform personal access token (default: inferred from env — see below) |
+| `--remote <name>` | | Git remote to infer the domain from (default: `origin`) |
+| `--dir <path>` | | Directory to write config to (default: cwd) |
+| `--yes` | `-y` | Accept all prompts using inferred or discovered defaults |
 
 **Token environment variable lookup order:**
 
@@ -543,7 +544,15 @@ If any project is missing `shipit.toml`, run `shipit init` for it before
 continuing:
 
 ```bash
-shipit init --dir <project-dir>
+shipit init --dir <project-dir> -y
+```
+
+The `-y` flag accepts all inferred defaults (domain from the remote URL, token
+from the environment) non-interactively. If no defaults can be inferred and
+`-y` is set, shipit skips that field — in that case, pass the values explicitly:
+
+```bash
+shipit init --dir <project-dir> --platform-domain github.com --platform-token "$GITHUB_TOKEN" -y
 ```
 
 Do not proceed with any pipeline steps until all projects report a valid

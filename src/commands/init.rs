@@ -96,8 +96,17 @@ pub fn init(args: InitArgs) -> Result<(), ShipItError> {
     let domain = if let Some(domain) = args.platform_domain {
         domain
     } else if let Some(ref default) = inferred_domain {
+        if args.yes {
+            eprintln!("  Using inferred platform domain: {}", default.bold());
+            default.clone()
+        } else {
+            eprintln!();
+            prompt_line_with_default("Platform domain:", default)?
+        }
+    } else if args.yes {
         eprintln!();
-        prompt_line_with_default("Platform domain:", default)?
+        crate::output::print_skipped("Platform domain skipped (no default available).");
+        String::new()
     } else {
         eprintln!();
         prompt_line("Platform domain (e.g. github.com):")?
@@ -119,9 +128,14 @@ pub fn init(args: InitArgs) -> Result<(), ShipItError> {
     let token = if let Some(token) = args.platform_token {
         token
     } else if let Some((env_var_name, ref env_var_value)) = env_token {
-        eprintln!();
-        eprintln!("  Found token in {}.", format!("${env_var_name}").bold());
-        prompt_line_with_env_default("Platform token:", env_var_name, env_var_value)?
+        if args.yes {
+            eprintln!("  Using token from ${}.", env_var_name.bold());
+            env_var_value.clone()
+        } else {
+            eprintln!();
+            eprintln!("  Found token in {}.", format!("${env_var_name}").bold());
+            prompt_line_with_env_default("Platform token:", env_var_name, env_var_value)?
+        }
     } else if let Some(candidates) = token_env_var_candidates(domain.trim()) {
         let vars = candidates
             .iter()
@@ -132,6 +146,9 @@ pub fn init(args: InitArgs) -> Result<(), ShipItError> {
             "No platform token found. Set {} or provide --platform-token.",
             vars
         )));
+    } else if args.yes {
+        crate::output::print_skipped("Platform token skipped (no default available).");
+        String::new()
     } else {
         eprintln!();
         prompt_line("Platform token (leave blank to skip):")?
