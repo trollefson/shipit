@@ -16,9 +16,9 @@ use crate::error::ShipItError;
 
 fn init_tracing(verbosity: u8) {
     let level = match verbosity {
-        0 => "warn",
-        1 => "info",
-        _ => "debug",
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
     };
     fmt()
         .with_env_filter(EnvFilter::new(level))

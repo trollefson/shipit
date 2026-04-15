@@ -203,7 +203,7 @@ pub struct Cli {
         long,
         action = clap::ArgAction::Count,
         global = true,
-        help = "Increase log verbosity (-v for info, -vv for debug)"
+        help = "Increase log verbosity (-v for debug, -vv for trace)"
     )]
     pub verbose: u8,
     #[arg(long, hide = true)]
