@@ -631,7 +631,7 @@ for each pipeline step (in config order, or user-specified subset):
    > in the summary. Never write a bare tag name or PR number — always wrap it
    > in a hyperlink. Use the URL printed by `b2b apply` for pull/merge requests
    > and construct the tag URL from the remote host
-   > (e.g. `https://github.com/org/repo/releases/tag/v1.4.0`). A summary
+   > (e.g. `https://github.com/org/repo/tree/v1.4.0`). A summary
    > without links is incomplete.
 
    **File naming:** `release-summary-<ISO-8601-timestamp>.md`  
@@ -649,7 +649,7 @@ for each pipeline step (in config order, or user-specified subset):
 
    | Project | Step | Tag / PR | Title |
    |---|---|---|---|
-   | api-service | main → tag | `v1.4.0` | — |
+   | api-service | main → tag | [v1.4.0](https://github.com/org/api-service/tree/v1.4.0) | — |
    | api-service | dev → qa | [#42](https://github.com/org/api-service/pull/42) | feat: add payment integration |
    | infra | dev → main | [#11](https://github.com/org/infra/pull/11) | chore: update terraform modules |
 
@@ -681,7 +681,7 @@ for each pipeline step (in config order, or user-specified subset):
      Link to the created resource whenever possible: use a Markdown hyperlink
      for pull/merge requests (e.g. `[#42](https://github.com/org/repo/pull/42)`)
      and for tags if the remote host provides a tag URL
-     (e.g. `[v1.4.0](https://github.com/org/repo/releases/tag/v1.4.0)`).
+     (e.g. `[v1.4.0](https://github.com/org/repo/tree/v1.4.0)`).
    - **Projects Without Changes** — list every project (or individual step)
      where the plan's `commits` list was empty across the entire session.
    - **Release Highlights** — aggregate the `commits` lists from every
