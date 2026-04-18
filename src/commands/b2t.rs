@@ -262,7 +262,8 @@ mod tests {
         let base_oid = make_commit(&repo, "initial commit");
         make_tag(&repo, "v1.0.0", base_oid);
         make_commit(&repo, "feat: add something");
-        make_commit(&repo, "fix: repair something");
+        let source_oid = make_commit(&repo, "fix: repair something");
+        repo.reference("refs/remotes/origin/master", source_oid, false, "test").unwrap();
 
         let mut mock = MockPlatform::new();
         mock.expect_enrich_messages()
@@ -294,7 +295,8 @@ mod tests {
         let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
         let base_oid = make_commit(&repo, "initial commit");
         make_tag(&repo, "v1.0.0", base_oid);
-        make_commit(&repo, "feat: new capability");
+        let source_oid = make_commit(&repo, "feat: new capability");
+        repo.reference("refs/remotes/origin/master", source_oid, false, "test").unwrap();
 
         let mut mock = MockPlatform::new();
         mock.expect_enrich_messages()

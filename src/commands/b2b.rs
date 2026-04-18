@@ -227,7 +227,9 @@ mod tests {
         // Create target branch pointing at initial commit
         let head = repo.head().unwrap().target().unwrap();
         repo.branch("main", &repo.find_commit(head).unwrap(), false).unwrap();
-        make_commit(&repo, "feat: add feature");
+        repo.reference("refs/remotes/origin/main", head, false, "test").unwrap();
+        let source_oid = make_commit(&repo, "feat: add feature");
+        repo.reference("refs/remotes/origin/master", source_oid, false, "test").unwrap();
 
         let mut mock = MockPlatform::new();
         mock.expect_enrich_messages()
@@ -297,8 +299,10 @@ mod tests {
         let base_oid = make_commit(&repo, "chore: initial setup");
 
         repo.branch("main", &repo.find_commit(base_oid).unwrap(), false).unwrap();
+        repo.reference("refs/remotes/origin/main", base_oid, false, "test").unwrap();
         make_commit(&repo, "feat: add new feature");
-        make_commit(&repo, "fix: correct a bug");
+        let source_oid = make_commit(&repo, "fix: correct a bug");
+        repo.reference("refs/remotes/origin/master", source_oid, false, "test").unwrap();
 
         let mut mock = MockPlatform::new();
         mock.expect_enrich_messages()
@@ -332,8 +336,10 @@ mod tests {
         let base_oid = make_commit(&repo, "chore: initial");
 
         repo.branch("main", &repo.find_commit(base_oid).unwrap(), false).unwrap();
+        repo.reference("refs/remotes/origin/main", base_oid, false, "test").unwrap();
         make_commit(&repo, "feat: alpha");
-        make_commit(&repo, "fix: beta");
+        let source_oid = make_commit(&repo, "fix: beta");
+        repo.reference("refs/remotes/origin/master", source_oid, false, "test").unwrap();
 
         let mut mock = MockPlatform::new();
         mock.expect_enrich_messages()

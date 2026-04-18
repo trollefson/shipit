@@ -343,16 +343,16 @@ impl TetheredGit {
     // message parsing
     /// Collects commits on `self.source` since `target`, optionally filtering to merge commits only.
     pub(crate) fn collect_commits(&self, target: &str, only_merges: &bool) -> Result<Vec<git2::Oid>, ShipItError> {
-        let target = self.repo.find_branch(target, git2::BranchType::Local).map_err(ShipItError::Git)?;
-        let target_oid = target
-            .get()
+        let remote_target_ref = format!("refs/remotes/{}/{}", self.remote_name, target);
+        let target_ref = self.repo.find_reference(&remote_target_ref).map_err(ShipItError::Git)?;
+        let target_oid = target_ref
             .target()
             .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the target branch!")))?;
 
         let target_oid_on_source = self.repo.find_commit(target_oid).unwrap();
 
         let mut revwalk = self.repo.revwalk().map_err(ShipItError::Git)?;
-        let full_ref = format!("refs/heads/{}", self.source);
+        let full_ref = format!("refs/remotes/{}/{}", self.remote_name, self.source);
         revwalk.push_ref(&full_ref).map_err(ShipItError::Git)?;
 
         let target_oid_hash = target_oid_on_source.id();
@@ -388,7 +388,7 @@ impl TetheredGit {
         let tag_oid = tag_commit.id();
 
         let mut revwalk = self.repo.revwalk().map_err(ShipItError::Git)?;
-        let branch_ref = format!("refs/heads/{}", self.source);
+        let branch_ref = format!("refs/remotes/{}/{}", self.remote_name, self.source);
         revwalk.push_ref(&branch_ref).map_err(ShipItError::Git)?;
         revwalk.hide(tag_oid).map_err(ShipItError::Git)?;
 
@@ -1480,9 +1480,10 @@ mod tests {
         let bare_dir = TempDir::new().unwrap();
         let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
         let base_oid = make_commit(&repo, "base commit");
-        repo.reference("refs/heads/base", base_oid, false, "test").unwrap();
+        repo.reference("refs/remotes/origin/base", base_oid, false, "test").unwrap();
         make_commit(&repo, "regular commit 1");
-        make_commit(&repo, "regular commit 2");
+        let head_oid = make_commit(&repo, "regular commit 2");
+        repo.reference("refs/remotes/origin/master", head_oid, false, "test").unwrap();
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
         let commits = tethered.collect_commits("base", &true).unwrap();
         assert!(commits.is_empty(), "regular commits should be excluded when only_merges=true");
@@ -1494,12 +1495,12 @@ mod tests {
         let bare_dir = TempDir::new().unwrap();
         let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
         let base_oid = make_commit(&repo, "base commit");
-        repo.reference("refs/heads/base", base_oid, false, "test").unwrap();
+        repo.reference("refs/remotes/origin/base", base_oid, false, "test").unwrap();
         let master_commit = make_commit(&repo, "commit on master");
 
         // Create a feature-branch commit (child of base, not master) without advancing HEAD,
         // then create a merge commit on master.
-        {
+        let merge_oid = {
             let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
             let tree_id = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(tree_id).unwrap();
@@ -1507,8 +1508,9 @@ mod tests {
             let feature_commit_oid = repo.commit(None, &sig, &sig, "feature commit", &tree, &[&base_commit]).unwrap();
             let p1 = repo.find_commit(master_commit).unwrap();
             let p2 = repo.find_commit(feature_commit_oid).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap();
-        }
+            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap()
+        };
+        repo.reference("refs/remotes/origin/master", merge_oid, false, "test").unwrap();
 
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
         let commits = tethered.collect_commits("base", &true).unwrap();
@@ -1524,7 +1526,8 @@ mod tests {
         let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
         let base_oid = make_commit(&repo, "initial commit");
         make_tag(&repo, "v1.0.0", base_oid);
-        make_commit(&repo, "regular commit");
+        let head_oid = make_commit(&repo, "regular commit");
+        repo.reference("refs/remotes/origin/master", head_oid, false, "test").unwrap();
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
         let commits = tethered.collect_commits_since_tag("v1.0.0", true).unwrap();
         assert!(commits.is_empty(), "regular commits should be excluded when only_merges=true");
@@ -1540,15 +1543,16 @@ mod tests {
         let on_master = make_commit(&repo, "commit on master");
 
         // Create a feature commit off base, then merge it in.
-        {
+        let merge_oid = {
             let sig = git2::Signature::new("test", "test@test.com", &git2::Time::new(1_000_000, 0)).unwrap();
             let tree_id = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(tree_id).unwrap();
             let feature_oid = repo.commit(None, &sig, &sig, "feature commit", &tree, &[&repo.find_commit(base_oid).unwrap()]).unwrap();
             let p1 = repo.find_commit(on_master).unwrap();
             let p2 = repo.find_commit(feature_oid).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap();
-        }
+            repo.commit(Some("HEAD"), &sig, &sig, "Merge branch 'feature'", &tree, &[&p1, &p2]).unwrap()
+        };
+        repo.reference("refs/remotes/origin/master", merge_oid, false, "test").unwrap();
 
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
         let commits = tethered.collect_commits_since_tag("v1.0.0", true).unwrap();
