@@ -266,15 +266,27 @@ impl TetheredGit {
         result.map(|_| ())
     }
 
-    /// Fetches `self.source` from `self.remote_name` to bring the remote-tracking ref up to date.
-    /// Using fetch (rather than pull) works correctly even when `self.source` is not the
-    /// currently checked-out branch, which is always the case for `b2t` operations.
+    /// Syncs `self.source` with its remote counterpart.
+    /// Uses `pull --ff-only` when the branch is checked out (git rejects the
+    /// refspec form for the active branch), and `fetch <branch>:<branch>` otherwise
+    /// so the local ref is updated, not just the remote-tracking ref.
     fn fetch_branch(&self) -> Result<(), ShipItError> {
         let sp = crate::output::start_spinner(format!("Pulling {}...", self.source).as_str());
-        let result = self.runner.run_git(
-            vec!["fetch".into(), self.remote_name.clone(), self.source.clone()],
-            &self.path,
-        );
+
+        let is_checked_out = self.repo
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().map(|s| s == self.source))
+            .unwrap_or(false);
+
+        let args = if is_checked_out {
+            vec!["pull".into(), "--ff-only".into(), self.remote_name.clone(), self.source.clone()]
+        } else {
+            let refspec = format!("{}:{}", self.source, self.source);
+            vec!["fetch".into(), self.remote_name.clone(), refspec]
+        };
+
+        let result = self.runner.run_git(args, &self.path);
         sp.finish_and_clear();
         result.map(|_| ())
     }
@@ -1722,16 +1734,36 @@ mod tests {
     }
 
     #[test]
-    fn test_fetch_branch_passes_correct_args() {
+    fn test_fetch_branch_checked_out_uses_pull() {
         let work_dir = TempDir::new().unwrap();
         let bare_dir = TempDir::new().unwrap();
         let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
         make_commit(&repo, "initial commit");
+        // HEAD is on master — expect pull --ff-only
+        let mut mock_runner = MockRunner::new();
+        mock_runner
+            .expect_run_git()
+            .withf(|args, _| args == &["pull", "--ff-only", "origin", "master"])
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+
+        let tethered = make_tethered_with_runner(repo, work_dir.path().to_path_buf(), Box::new(mock_runner));
+        tethered.fetch_branch().unwrap();
+    }
+
+    #[test]
+    fn test_fetch_branch_not_checked_out_uses_refspec() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        make_commit(&repo, "initial commit");
+        // Check out a different branch so master is not HEAD
+        repo.set_head("refs/heads/other").unwrap();
 
         let mut mock_runner = MockRunner::new();
         mock_runner
             .expect_run_git()
-            .withf(|args, _| args == &["fetch", "origin", "master"])
+            .withf(|args, _| args == &["fetch", "origin", "master:master"])
             .times(1)
             .returning(|_, _| Ok(vec![]));
 
