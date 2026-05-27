@@ -9,7 +9,7 @@
 
 **Shipit** is a Rust command line interface for managing merge requests, changelogs, tags, and releases using a plan and apply interface. Built with coding agent integration in mind. | [gitshipit.net](https://gitshipit.net)
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/trollefson)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/tanstv)
 [![Crates.io](https://img.shields.io/crates/v/shipit)](https://crates.io/crates/shipit)
 [![docs.rs](https://img.shields.io/docsrs/shipit)](https://docs.rs/shipit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
