@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path};
 
 use async_trait::async_trait;
@@ -351,9 +351,64 @@ impl TetheredGit {
         }
     }
 
+    /// Computes a patch-id for the commit at `oid` — a hash of the commit's diff that is
+    /// stable across rebases, squashes, and cherry-picks. Returns `None` for merge commits
+    /// and commits with an empty diff, which have no meaningful patch identity.
+    fn commit_patch_id(&self, oid: git2::Oid) -> Option<git2::Oid> {
+        let commit = self.repo.find_commit(oid).ok()?;
+        if commit.parent_count() > 1 {
+            return None;
+        }
+        let parent_tree = match commit.parent(0) {
+            Ok(parent) => Some(parent.tree().ok()?),
+            Err(_) => None,
+        };
+        let tree = commit.tree().ok()?;
+        let diff = self.repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None).ok()?;
+        if diff.deltas().len() == 0 {
+            return None;
+        }
+        diff.patchid(None).ok()
+    }
+
+    /// Returns `true` when merging `self.source` into `target` would change content — i.e.
+    /// the diff from the merge base to the source tip (what the platform renders as the
+    /// PR/MR diff) contains at least one delta. Ancestry-new commits whose content already
+    /// landed on the target (e.g. a squash merge followed by a back-merge) yield `false`.
+    ///
+    /// Compares the remote-tracking refs of both branches, consistent with [`collect_commits`].
+    pub(crate) fn has_content_diff(&self, target: &str) -> Result<bool, ShipItError> {
+        let source_ref = format!("refs/remotes/{}/{}", self.remote_name, self.source);
+        let target_ref = format!("refs/remotes/{}/{}", self.remote_name, target);
+        let source_oid = self.repo.find_reference(&source_ref).map_err(ShipItError::Git)?
+            .target()
+            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the source branch!")))?;
+        let target_oid = self.repo.find_reference(&target_ref).map_err(ShipItError::Git)?
+            .target()
+            .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the target branch!")))?;
+
+        // Unrelated histories have no merge base and always differ in content.
+        let base_oid = match self.repo.merge_base(source_oid, target_oid) {
+            Ok(oid) => oid,
+            Err(_) => return Ok(true),
+        };
+
+        let base_tree = self.repo.find_commit(base_oid).map_err(ShipItError::Git)?
+            .tree().map_err(ShipItError::Git)?;
+        let source_tree = self.repo.find_commit(source_oid).map_err(ShipItError::Git)?
+            .tree().map_err(ShipItError::Git)?;
+        let diff = self.repo.diff_tree_to_tree(Some(&base_tree), Some(&source_tree), None)
+            .map_err(ShipItError::Git)?;
+        Ok(diff.deltas().len() > 0)
+    }
+
     // POST MVP TODO: refactor only_merges in to merges and commits bools for more flexible
     // message parsing
     /// Collects commits on `self.source` since `target`, optionally filtering to merge commits only.
+    ///
+    /// Commits whose patch-id already exists on the target under a different SHA are dropped:
+    /// squash and rebase merges break ancestry but preserve patch content, so without this
+    /// filter previously-released commits would reappear in every plan.
     pub(crate) fn collect_commits(&self, target: &str, only_merges: &bool) -> Result<Vec<git2::Oid>, ShipItError> {
         let remote_target_ref = format!("refs/remotes/{}/{}", self.remote_name, target);
         let target_ref = self.repo.find_reference(&remote_target_ref).map_err(ShipItError::Git)?;
@@ -374,6 +429,28 @@ impl TetheredGit {
         for oid in revwalk {
             commits.push(oid.map_err(ShipItError::Git)?);
         }
+
+        let commits = if commits.is_empty() {
+            commits
+        } else {
+            let source_oid = self.repo.find_reference(&full_ref).map_err(ShipItError::Git)?
+                .target()
+                .ok_or_else(|| ShipItError::Git(git2::Error::from_str("Failed to find a valid commit for the source branch!")))?;
+            let mut target_walk = self.repo.revwalk().map_err(ShipItError::Git)?;
+            target_walk.push(target_oid_hash).map_err(ShipItError::Git)?;
+            target_walk.hide(source_oid).map_err(ShipItError::Git)?;
+            let target_patch_ids: HashSet<git2::Oid> = target_walk
+                .filter_map(|oid| oid.ok())
+                .filter_map(|oid| self.commit_patch_id(oid))
+                .collect();
+            commits
+                .into_iter()
+                .filter(|oid| {
+                    self.commit_patch_id(*oid)
+                        .is_none_or(|pid| !target_patch_ids.contains(&pid))
+                })
+                .collect()
+        };
 
         let commits: Vec<_> = if *only_merges {
             commits.into_iter().filter(|oid| {
@@ -985,10 +1062,26 @@ pub(crate) mod test_helpers {
         repo
     }
 
+    static COMMIT_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
     /// Create a commit on HEAD (advancing the current branch) and return its OID.
+    ///
+    /// Each commit writes a unique file so trees (and therefore patch-ids) are distinct,
+    /// matching real-world commits. Empty-tree commits would otherwise trip the
+    /// content-diff guard and patch-id filtering.
     pub(crate) fn make_commit(repo: &Repository, message: &str) -> git2::Oid {
+        let n = COMMIT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        make_file_commit(repo, &format!("file_{}.txt", n), message, message)
+    }
+
+    /// Create a commit on HEAD that writes `content` to `filename` and return its OID.
+    pub(crate) fn make_file_commit(repo: &Repository, filename: &str, content: &str, message: &str) -> git2::Oid {
         let sig = Signature::new("test", "test@test.com", &Time::new(1_000_000, 0)).unwrap();
-        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        std::fs::write(repo.workdir().unwrap().join(filename), content).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(filename)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
         let parents: Vec<git2::Commit> = repo
             .head()
@@ -999,6 +1092,49 @@ pub(crate) mod test_helpers {
             .collect();
         let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
         repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parent_refs).unwrap()
+    }
+
+    /// Create a commit on top of `parent` that applies the same file change
+    /// (`filename` + `content`) without advancing HEAD, updating `refname` instead.
+    ///
+    /// Simulates a platform squash merge: identical patch content under a different
+    /// SHA and ancestry line than the original commit.
+    pub(crate) fn make_squash_commit(
+        repo: &Repository,
+        parent: git2::Oid,
+        filename: &str,
+        content: &str,
+        message: &str,
+        refname: &str,
+    ) -> git2::Oid {
+        let sig = Signature::new("test", "test@test.com", &Time::new(1_000_000, 0)).unwrap();
+        let parent_commit = repo.find_commit(parent).unwrap();
+        let parent_tree = parent_commit.tree().unwrap();
+        let blob = repo.blob(content.as_bytes()).unwrap();
+        let mut builder = repo.treebuilder(Some(&parent_tree)).unwrap();
+        builder.insert(filename, blob, 0o100644).unwrap();
+        let tree_id = builder.write().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some(refname), &sig, &sig, message, &tree, &[&parent_commit]).unwrap()
+    }
+
+    /// Create a merge commit of `parent2` into `parent1`, taking `parent2`'s tree
+    /// (the incoming side), and update `refname` to point at it.
+    ///
+    /// Models a back-merge (e.g. main merged into dev after a squash release), where
+    /// the merge introduces no content of its own.
+    pub(crate) fn make_merge_commit(
+        repo: &Repository,
+        parent1: git2::Oid,
+        parent2: git2::Oid,
+        message: &str,
+        refname: &str,
+    ) -> git2::Oid {
+        let sig = Signature::new("test", "test@test.com", &Time::new(1_000_000, 0)).unwrap();
+        let p1 = repo.find_commit(parent1).unwrap();
+        let p2 = repo.find_commit(parent2).unwrap();
+        let tree = p2.tree().unwrap();
+        repo.commit(Some(refname), &sig, &sig, message, &tree, &[&p1, &p2]).unwrap()
     }
 
     /// Create an annotated tag pointing at the commit with the given OID.
@@ -1030,7 +1166,10 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::test_helpers::{init_repo_with_remote, make_commit, make_tag, make_tethered_git};
+    use crate::git::test_helpers::{
+        init_repo_with_remote, make_commit, make_file_commit, make_merge_commit,
+        make_squash_commit, make_tag, make_tethered_git,
+    };
     use crate::git::MockPlatform;
     use tempfile::TempDir;
 
@@ -1527,6 +1666,76 @@ mod tests {
         let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
         let commits = tethered.collect_commits("base", &true).unwrap();
         assert_eq!(commits.len(), 1, "expected exactly one merge commit");
+    }
+
+    // ── collect_commits (patch-id filtering) ─────────────────────────────────
+
+    #[test]
+    fn test_collect_commits_squash_merged_patch_filtered() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "chore: base");
+        let feature_oid = make_file_commit(&repo, "feat.txt", "new feature", "feat: add feature");
+        repo.reference("refs/remotes/origin/master", feature_oid, false, "test").unwrap();
+        // Simulate the platform squash-merging the feature onto main: same patch, new SHA.
+        make_squash_commit(&repo, base_oid, "feat.txt", "new feature", "feat: add feature (squashed)", "refs/remotes/origin/main");
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits("main", &false).unwrap();
+
+        assert!(commits.is_empty(), "squash-merged commit should be filtered by patch-id, got {:?}", commits);
+    }
+
+    #[test]
+    fn test_collect_commits_new_work_after_squash_survives() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "chore: base");
+        make_file_commit(&repo, "feat.txt", "new feature", "feat: add feature");
+        make_squash_commit(&repo, base_oid, "feat.txt", "new feature", "feat: add feature (squashed)", "refs/remotes/origin/main");
+        let new_oid = make_file_commit(&repo, "next.txt", "more work", "feat: next thing");
+        repo.reference("refs/remotes/origin/master", new_oid, false, "test").unwrap();
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+        let commits = tethered.collect_commits("main", &false).unwrap();
+
+        assert_eq!(commits, vec![new_oid], "only the genuinely new commit should remain");
+    }
+
+    // ── has_content_diff ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_has_content_diff_source_ahead_returns_true() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "chore: base");
+        repo.reference("refs/remotes/origin/main", base_oid, false, "test").unwrap();
+        let feature_oid = make_file_commit(&repo, "feat.txt", "new feature", "feat: add feature");
+        repo.reference("refs/remotes/origin/master", feature_oid, false, "test").unwrap();
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+
+        assert!(tethered.has_content_diff("main").unwrap());
+    }
+
+    #[test]
+    fn test_has_content_diff_squash_and_backmerge_returns_false() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "chore: base");
+        let feature_oid = make_file_commit(&repo, "feat.txt", "new feature", "feat: add feature");
+        // Platform squash-merges the feature to main, then main is merged back into master.
+        let squash_oid = make_squash_commit(&repo, base_oid, "feat.txt", "new feature", "feat: add feature (squashed)", "refs/remotes/origin/main");
+        let merge_oid = make_merge_commit(&repo, feature_oid, squash_oid, "Merge branch 'main' into master", "refs/heads/master");
+        repo.reference("refs/remotes/origin/master", merge_oid, false, "test").unwrap();
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(MockPlatform::new()));
+
+        assert!(!tethered.has_content_diff("main").unwrap(), "back-merged branch has no content to merge");
     }
 
     // ── collect_commits_since_tag (only_merges = true) ───────────────────────

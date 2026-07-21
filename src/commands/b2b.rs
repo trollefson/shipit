@@ -37,6 +37,13 @@ pub(crate) async fn run_plan(tethered_git: TetheredGit, args: B2bPlanArgs, path:
         vec![]
     } else {
         let mut msgs = tethered_git.collect_messages(&args.target, &args.only_merges)?;
+        if !msgs.is_empty() && !tethered_git.has_content_diff(&args.target)? {
+            tracing::warn!(
+                "Commits on '{}' are not ancestors of '{}', but introduce no content changes (already merged via squash/rebase?). Nothing to do.",
+                args.source, args.target
+            );
+            return Ok(());
+        }
         let sp = crate::output::start_spinner("Enriching commit messages...");
         msgs = tethered_git.platform.enrich_messages(&msgs).await;
         sp.finish_and_clear();
@@ -178,7 +185,10 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::cli::B2bPlanArgs;
-    use crate::git::test_helpers::{init_repo_with_remote, make_commit, make_tethered_git};
+    use crate::git::test_helpers::{
+        init_repo_with_remote, make_commit, make_file_commit, make_merge_commit,
+        make_squash_commit, make_tethered_git,
+    };
     use crate::git::MockPlatform;
     use crate::plan::{FieldWithSource, Plan};
 
@@ -361,6 +371,36 @@ mod tests {
         let content = std::fs::read_to_string(entries[0].as_ref().unwrap().path()).unwrap();
         assert!(content.contains("- "), "expected bullet list in description: {}", content);
         assert!(content.contains("generated_by: raw"));
+    }
+
+    #[tokio::test]
+    async fn test_run_plan_no_content_diff_writes_no_plan() {
+        let work_dir = TempDir::new().unwrap();
+        let bare_dir = TempDir::new().unwrap();
+        let repo = init_repo_with_remote(work_dir.path(), bare_dir.path());
+        let base_oid = make_commit(&repo, "chore: base");
+        let feature_oid = make_file_commit(&repo, "feat.txt", "new feature", "feat: add feature");
+        // The platform squash-merged master into main, then main was merged back into
+        // master: the merge commit is ancestry-new but carries no content changes.
+        let squash_oid = make_squash_commit(&repo, base_oid, "feat.txt", "new feature", "feat: add feature (squashed)", "refs/remotes/origin/main");
+        let merge_oid = make_merge_commit(&repo, feature_oid, squash_oid, "Merge branch 'main' into master", "refs/heads/master");
+        repo.reference("refs/remotes/origin/master", merge_oid, false, "test").unwrap();
+
+        let mut mock = MockPlatform::new();
+        mock.expect_enrich_messages().never();
+
+        let tmp_out = TempDir::new().unwrap();
+        let out_path = tmp_out.path().to_path_buf();
+
+        let tethered = make_tethered_git(repo, work_dir.path().to_path_buf(), "master", Box::new(mock));
+
+        let args = make_b2b_plan_args("master", "main");
+
+        let result = super::run_plan(tethered, args, &out_path).await;
+        assert!(result.is_ok(), "run_plan failed: {:?}", result);
+
+        let plans_dir = out_path.join(".shipit").join("plans");
+        assert!(!plans_dir.exists(), "no plan should be written when the content diff is empty");
     }
 
     #[tokio::test]
